@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#102925" />
+    <title>UNO · 不留情的朋友局</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <dialog id="rules">
+      <div class="dialog-head">
+        <span class="eyebrow">THE HOUSE RULES</span
+        ><button id="close-rules" class="icon-button" aria-label="关闭规则">
+          ✕
+        </button>
+      </div>
+      <h2>先懂规则，再不留情。</h2>
+      <p class="muted">No Mercy 双人局 · 含双方约定的 +4 质疑规则</p>
+      <div id="rules-content"></div>
+      <button id="rules-done" class="primary wide">知道了</button>
+    </dialog>
+    <dialog id="colors">
+      <span class="eyebrow">YOUR CALL</span>
+      <h2 id="color-title">选择接下来的颜色</h2>
+      <div id="color-options" class="color-options"></div>
+      <button id="cancel-color" class="ghost wide">取消</button>
+    </dialog>
+    <dialog id="leave">
+      <h2>要离开这一局吗？</h2>
+      <p>主动离开会立即结束对局。关闭页面或断线则保留 60 秒重连时间。</p>
+      <div class="button-row">
+        <button id="stay" class="ghost">继续玩</button
+        ><button id="confirm-leave" class="danger">离开房间</button>
+      </div>
+    </dialog>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>
