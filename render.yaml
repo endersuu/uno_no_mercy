@@ -1,0 +1,16 @@
+# A single Node service keeps both players in the same in-memory room store.
+# Free plan only; Render assigns PORT and the HTTPS *.onrender.com address.
+services:
+  - type: web
+    name: uno-no-mercy
+    runtime: node
+    plan: free
+    branch: main
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production

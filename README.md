@@ -2,6 +2,12 @@
 
 TypeScript 实时双人 MVP。创建房间后复制链接，第二位玩家加入即开始。无需账号、数据库或外部服务，不包含积分或排名。
 
+## 公网部署
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/endersuu/uno_no_mercy)
+
+已提供 `render.yaml`，使用 Node.js 24 和 Free Web Service。点击上方按钮，登录 Render 并授权仓库后即可提交部署；平台会分配 HTTPS `*.onrender.com` 子域名。免费方案是否可用以控制台为准。详见 [部署到 Render](部署到Render.md)。配置已就绪不代表服务已上线，实际网址需要部署完成后由平台分配。
+
 ## 启动
 
 要求 Node.js 22.12+（本环境验证为 Node 24）。
