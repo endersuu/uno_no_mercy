@@ -10,6 +10,12 @@ TypeScript 实时双人 MVP。创建房间后复制链接，第二位玩家加�
 
 已提供 `render.yaml`，使用 Node.js 24 和 Free Web Service。点击上方按钮，登录 Render 并授权仓库后即可提交部署；平台会分配 HTTPS `*.onrender.com` 子域名。免费方案是否可用以控制台为准。详见 [部署到 Render](部署到Render.md)。配置已就绪不代表服务已上线，实际网址需要部署完成后由平台分配。
 
+## CI 与自动部署
+
+[GitHub Actions](https://github.com/endersuu/uno_no_mercy/actions/workflows/ci.yml) 会在推送 `main`、向 `main` 提交 PR 或手动运行时，使用 Node.js 24 执行构建、单元测试和全部 Chromium 浏览器测试。测试报告、截图及失败时的操作追踪保留 7 天。
+
+Render 使用 `autoDeployTrigger: checksPass`，连接 GitHub 仓库后，只有 `main` 的检查通过才自动部署；PR 只运行测试。此流程不需要在 GitHub 保存 Render API Key。首次连接与排错见 [部署说明](部署到Render.md#github-actions-与自动部署)。
+
 ## 启动
 
 要求 Node.js 22.12+（本环境验证为 Node 24）。

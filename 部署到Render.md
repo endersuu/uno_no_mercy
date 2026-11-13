@@ -40,6 +40,23 @@
 - 用两个独立浏览器或设备创建、加入同一个房间，确认双方都收到手牌并能出牌。
 - 在一方打开游戏规则后，双方应暂停；关闭规则后由暂停发起者点击「继续游戏」。
 
+## GitHub Actions 与自动部署
+
+工作流位于 `.github/workflows/ci.yml`。推送 `main`、向 `main` 提交 PR 或在 Actions 页面手动运行，都会执行：
+
+1. 安装锁定的依赖，使用 Node.js 24 构建并检查 TypeScript。
+2. 运行游戏规则、房间生命周期等单元测试。
+3. 安装与 Playwright 版本匹配的 Chromium，运行全部浏览器回归测试。
+4. 保存浏览器报告、截图与失败追踪，保留 7 天。
+
+公开 GitHub 仓库使用本工作流的标准 Linux 执行器免费。失败时在 [Actions 页面](https://github.com/endersuu/uno_no_mercy/actions/workflows/ci.yml) 打开对应运行，查看错误或下载 `browser-results` 附件。
+
+Render 的 **Auto-Deploy** 应选择 **After CI Checks Pass**，对应 `render.yaml` 中的 `autoDeployTrigger: checksPass`。服务追踪 `main`，GitHub 检查通过后才发布；失败不发布，PR 不发布。无需在 GitHub 添加 Render API Key。
+
+Render 原生自动部署要求连接 GitHub：在 Render 的 **Account Settings → Git Deployment Credentials** 授权仓库，并确认服务的仓库连接使用该凭证。仅填写公开 Git URL 创建的服务不支持原生自动部署，即使显示了仓库地址也不代表已连接。检查已绿但没有部署事件时，先检查该连接。详见 [Render 自动部署](https://render.com/docs/deploys) 与 [GitHub 连接说明](https://render.com/docs/github)。
+
+自动部署会重启游戏进程并清空旧房间。开发时使用分支和 PR 验证，准备上线再合并到 `main`。
+
 ## 免费实例与房间
 
 免费实例的休眠、额度和可用性以 Render 当前政策为准。首次访问休眠实例可能需要等待唤醒。
