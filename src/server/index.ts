@@ -8,7 +8,7 @@ import { Server } from "socket.io";
 import { resolve } from "node:path";
 import { Rooms } from "./rooms.js";
 import { AbuseGuard, clientIp } from "./abuse.js";
-import type { Action, Reply } from "../shared/types.js";
+import type { RoomAction, Reply } from "../shared/types.js";
 const trustedProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 0);
 if (
   !Number.isInteger(trustedProxyHops) ||
@@ -176,6 +176,21 @@ io.on("connection", (socket) => {
         ack({ ok: true });
         return;
       }
+      if (d.type === "debug-export") {
+        if (
+          d.roundId !== undefined &&
+          (typeof d.roundId !== "string" || d.roundId.length > 64)
+        )
+          throw Error("无效对局记录。");
+        ack({
+          ok: true,
+          snapshot: rooms.debugSnapshot(
+            socket.id,
+            d.roundId as string | undefined,
+          ),
+        });
+        return;
+      }
       if (
         d.type !== "action" ||
         !Number.isSafeInteger(d.revision) ||
@@ -185,6 +200,7 @@ io.on("connection", (socket) => {
         throw Error("无效操作。");
       const a = d.action as Record<string, unknown>;
       if (
+        typeof a.type !== "string" ||
         ![
           "play",
           "draw",
@@ -195,17 +211,10 @@ io.on("connection", (socket) => {
           "pause",
           "resume",
           "rematch",
-        ].includes(String(a.type))
+        ].includes(a.type)
       )
         throw Error("无效操作。");
-      if (
-        a.type === "play" &&
-        (typeof a.cardId !== "string" ||
-          a.cardId.length > 64 ||
-          (a.uno !== undefined && typeof a.uno !== "boolean"))
-      )
-        throw Error("无效牌。");
-      rooms.update(socket.id, d.revision as number, a as Action);
+      rooms.update(socket.id, d.revision as number, a as RoomAction);
       ack({ ok: true });
     } catch (e) {
       ack({ ok: false, error: e instanceof Error ? e.message : "请求失败。" });

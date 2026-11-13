@@ -1,4 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import type { DebugSnapshot } from "../../src/shared/types";
 test("two humans: invite, privacy, rules pause, reconnect, complete round, rematch, leave", async ({
   browser,
 }) => {
@@ -104,11 +106,42 @@ test("two humans: invite, privacy, rules pause, reconnect, complete round, remat
   }
   await expect(a.locator(".result")).toBeVisible();
   await expect(b.locator(".result")).toBeVisible();
+  const finishedRound = await a.locator("#debug-round").inputValue();
   await a.locator("#rematch").click();
   await expect(a.locator("#rematch")).toHaveText("已准备，等待对手…");
   await b.locator("#rematch").click();
   await expect(a.locator(".result")).toHaveCount(0);
   await expect(a.locator(".hand .card")).toHaveCount(7);
+  await expect(a.locator("#app")).toHaveAttribute("data-animating", "false");
+  await expect(a.locator("#debug-round option")).toHaveCount(2);
+  await expect(a.locator("#debug-round")).not.toHaveValue(finishedRound);
+  await a.locator(".activity summary").click();
+  await a.locator("#debug-round").selectOption(finishedRound);
+  for (const afterRender of [false, true]) {
+    if (afterRender) {
+      await a.locator("#pause").click();
+      await expect(a.locator("#rules")).toBeVisible();
+      await a.locator("#rules-done").click();
+      await a.locator("#resume").click();
+      await expect(a.locator(".pause-banner")).toHaveCount(0);
+    }
+    await expect(a.locator("#debug-round")).toHaveValue(finishedRound);
+    const downloadPromise = a.waitForEvent("download");
+    await a.locator("#export-debug").click();
+    const download = await downloadPromise;
+    const snapshot: DebugSnapshot = JSON.parse(
+      await readFile((await download.path())!, "utf8"),
+    );
+    expect(snapshot.round.roundId).toBe(finishedRound);
+    expect(snapshot.current.game.winner).not.toBeNull();
+    expect(snapshot.complete).toBe(true);
+    expect(snapshot.entries).toHaveLength(snapshot.round.entryCount);
+    expect(snapshot.entries[0].kind).toBe("start");
+    expect(
+      snapshot.entries.some((entry) => entry.action?.type === "play"),
+    ).toBe(true);
+  }
+  await a.locator(".activity summary").click();
   await b.locator("#leave-room").click();
   await b.locator("#confirm-leave").click();
   await expect(a.locator(".result")).toContainText("对手离开了房间");

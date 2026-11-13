@@ -64,9 +64,13 @@ export function deck(): Card[] {
   add(null, "roulette", 8);
   return cards;
 }
-export function newGame(turn = 0): Game {
+export function newGame(
+  turn = 0,
+  captureInitialDeck?: (cards: Card[]) => void,
+): Game {
   const pile = shuffle(deck()),
     hands = [[], []] as Card[][];
+  captureInitialDeck?.([...pile]);
   for (let i = 0; i < 7; i++) for (const hand of hands) hand.push(pile.pop()!);
   const discard: Card[] = [];
   do {

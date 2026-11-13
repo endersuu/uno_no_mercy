@@ -22,6 +22,81 @@ export type Action =
   | { type: "play"; cardId: string; color?: Color; uno?: boolean }
   | { type: "draw" | "challenge" | "uno" | "catch" }
   | { type: "roulette"; color: Color };
+export type RoomAction =
+  Action | { type: "pause" } | { type: "resume" } | { type: "rematch" };
+
+export interface DebugRoundSummary {
+  roundId: string;
+  round: number;
+  startedAt: string;
+  finishedAt: string | null;
+  entryCount: number;
+  complete: boolean;
+}
+/** Private server state, available only through an explicit debug export. */
+export interface DebugGameState {
+  roundId: string;
+  event: GameEvent | null;
+  hands: Card[][];
+  deck: Card[];
+  discard: Card[];
+  color: Color;
+  turn: number;
+  penalty: number;
+  lastPenalty: number;
+  challenge: { offender: number; illegal: boolean } | null;
+  roulette: boolean;
+  winner: number | null;
+  reason: string;
+  log: string[];
+  vulnerable: boolean[];
+}
+export interface DebugState {
+  game: DebugGameState;
+  revision: number;
+  pausedBy: number | null;
+  closed: boolean;
+  players: {
+    name: string;
+    connected: boolean;
+    deadline: number | null;
+    rematch: boolean;
+  }[];
+}
+export interface DebugAction {
+  type: RoomAction["type"];
+  cardId?: string;
+  color?: Color;
+  uno?: boolean;
+}
+export interface DebugEntry {
+  sequence: number;
+  at: string;
+  actor: number | null;
+  kind: "start" | "action" | "disconnect" | "reconnect" | "leave" | "expire";
+  action?: DebugAction;
+  requestedRevision?: number;
+  accepted: boolean;
+  error?: string;
+  before: DebugState | null;
+  after: DebugState;
+}
+export interface DebugSnapshot {
+  schemaVersion: 1;
+  kind: "uno-debug-snapshot";
+  exportedAt: string;
+  server: { appVersion: string; commit: string | null; rulesVersion: string };
+  room: string;
+  round: DebugRoundSummary;
+  players: string[];
+  /** Original shuffled deck, before dealing. Cards are drawn from the end. */
+  initialDeck: Card[];
+  initialDeckTop: "last";
+  entries: DebugEntry[];
+  current: DebugState;
+  complete: boolean;
+  recordingError?: string;
+}
 /** Public action facts only: never include drawn faces or private hands. */
 export interface GameEvent {
   id: number;
@@ -42,6 +117,7 @@ export interface PlayerView {
   rematch: boolean;
 }
 export interface View {
+  debugRounds?: DebugRoundSummary[];
   roundId: string | null;
   event: GameEvent | null;
   room: string;
@@ -68,7 +144,8 @@ export interface View {
   closed: boolean;
 }
 export type Reply =
-  { ok: true; room?: string; token?: string } | { ok: false; error: string };
+  | { ok: true; room?: string; token?: string; snapshot?: DebugSnapshot }
+  | { ok: false; error: string };
 export const colorNames: Record<Color, string> = {
   red: "红色",
   yellow: "黄色",

@@ -44,6 +44,8 @@ let handPageSize = 1;
 let handRound: string | null = null;
 let handObserver: ResizeObserver | null = null;
 let restoringSeat = false;
+let debugSelection: { room: string; roundId: string } | null = null;
+let debugRequest: { room: string; roundId: string } | null = null;
 interface Recovery {
   room: string;
   token: string;
@@ -93,6 +95,7 @@ function syncControls() {
   app.classList.toggle("is-pending", busy);
   app.dataset.animating = String(presenting);
   updateTurnUI();
+  syncDebugControls();
   if (busy || presenting || recovery) {
     app
       .querySelectorAll<HTMLButtonElement>(
@@ -323,6 +326,81 @@ async function action(a: Action | { type: "pause" | "resume" | "rematch" }) {
   if (!r.ok) render();
   return r.ok;
 }
+function syncDebugControls() {
+  const exporting = !!debugRequest && debugRequest.room === state?.room;
+  const button = app.querySelector<HTMLButtonElement>("#export-debug");
+  const select = app.querySelector<HTMLSelectElement>("#debug-round");
+  if (button) {
+    button.disabled = !online || exporting || !select?.value;
+    button.textContent = exporting ? "正在导出…" : "导出对局记录（JSON）";
+    button.setAttribute("aria-busy", String(exporting));
+  }
+  if (select) select.disabled = exporting;
+}
+async function exportDebug() {
+  const roundId = app.querySelector<HTMLSelectElement>("#debug-round")?.value;
+  if (!state || !roundId || debugRequest) return;
+  if (!socket.connected) {
+    toast("连接已断开，重连后可导出对局记录。");
+    return;
+  }
+  const request = { room: state.room, roundId };
+  debugRequest = request;
+  syncDebugControls();
+  try {
+    const reply = (await socket.timeout(20_000).emitWithAck("command", {
+      type: "debug-export",
+      roundId,
+    })) as Reply;
+    if (debugRequest !== request || state?.room !== request.room) return;
+    if (!reply.ok) {
+      toast(reply.error);
+      return;
+    }
+    const snapshot = reply.snapshot;
+    if (
+      !snapshot ||
+      snapshot.room !== request.room ||
+      snapshot.round.roundId !== request.roundId
+    ) {
+      toast("未收到这一局的记录，请重试。");
+      return;
+    }
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(snapshot, null, 2)], {
+        type: "application/json;charset=utf-8",
+      }),
+    );
+    const link = document.createElement("a");
+    const safeId = snapshot.round.roundId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    link.href = url;
+    link.download = `uno-round-${snapshot.round.round}-${safeId}.json`;
+    link.hidden = true;
+    document.body.append(link);
+    try {
+      link.click();
+    } finally {
+      // Safari may consume the Blob URL after the click handler has finished.
+      setTimeout(() => {
+        link.remove();
+        URL.revokeObjectURL(url);
+      }, 60_000);
+    }
+    toast(
+      snapshot.complete
+        ? "对局记录已导出，可将 JSON 文件用于排查。"
+        : "记录已导出，但部分记录缺失，文件中附有原因。",
+    );
+  } catch {
+    if (debugRequest === request && state?.room === request.room)
+      toast("导出未完成，请检查连接后重试。");
+  } finally {
+    if (debugRequest === request) {
+      debugRequest = null;
+      syncDebugControls();
+    }
+  }
+}
 function card(c: Card, button = false, enabled = false) {
   return cardMarkup(c, button, enabled, freshCards.has(c.id));
 }
@@ -433,6 +511,23 @@ function home() {
 function waiting(v: View) {
   return `<main class="waiting"><span class="eyebrow">ROOM / ${esc(v.room)}</span><h1>座位留好了。<br><span>就差你的朋友。</span></h1><p class="muted">${v.disconnected ? "对方暂时离线，保留席位等待重连。" : "对方打开链接加入后，游戏自动开始。"}</p>${v.disconnected ? '<p id="countdown" class="muted"></p>' : ""}<div class="waiting-seats"><div><span class="avatar">${esc(v.players[v.me].name[0])}</span><b>${esc(v.players[v.me].name)} <small>你</small></b><span class="ready-tag">已入座</span></div><span class="versus">VS</span><div><span class="avatar empty">＋</span><b>虚位以待</b><span class="muted">等一位够胆的朋友</span></div></div><div class="invite"><input aria-label="邀请链接" readonly value="${esc(location.href)}"><button class="primary" id="copy-link">复制邀请链接 ↗</button></div><p class="small-note">断线席位保留 60 秒 · 空房间自动销毁</p></main>`;
 }
+function debugControls(v: View) {
+  const rounds = v.debugRounds ?? [];
+  if (!rounds.length) return "";
+  const selected =
+    debugSelection?.room === v.room &&
+    rounds.some((r) => r.roundId === debugSelection?.roundId)
+      ? debugSelection.roundId
+      : (v.roundId ?? rounds.at(-1)!.roundId);
+  return `<section class="debug-export" aria-label="对局调试记录"><div class="debug-export-controls"><label for="debug-round">对局记录</label><select id="debug-round">${rounds
+    .map(
+      (r) =>
+        `<option value="${esc(r.roundId)}" ${r.roundId === selected ? "selected" : ""}>第 ${r.round} 局 · ${r.finishedAt ? "已结束" : "进行中"}${r.complete ? "" : " · 记录不完整"}</option>`,
+    )
+    .join(
+      "",
+    )}</select><button class="ghost" id="export-debug" type="button" aria-describedby="debug-export-note" ${!online || debugRequest?.room === v.room ? "disabled" : ""}>${debugRequest?.room === v.room ? "正在导出…" : "导出对局记录（JSON）"}</button></div><p id="debug-export-note">点击导出双方手牌、牌堆和完整操作记录。请在离开房间前保存；服务器重启后记录会清除。</p></section>`;
+}
 function table(v: View) {
   const me = v.players[v.me],
     other = v.players[1 - v.me],
@@ -441,7 +536,7 @@ function table(v: View) {
     ended = v.phase === "finished",
     canAct = !paused && !ended && !busy && !presenting && !recovery,
     showChallenge = myTurn && v.challenge && !ended;
-  return `<main class="game" data-opening="${roundOpening}" data-turn="${turnInfo(v).mode}"><div class="game-heading"><div><span class="eyebrow">THE FRIENDLY SHOWDOWN</span><h2>这一局，不留情。</h2></div><button class="ghost" id="pause" ${ended ? "disabled" : ""}>Ⅱ 暂停 / 看规则</button></div><section class="turn-banner" role="status" aria-live="polite"><span class="turn-icon">${turnInfo(v).icon}</span><div><b>${esc(turnInfo(v).title)}</b><p>${esc(turnInfo(v).hint)}</p></div></section><section class="table"><div class="opponent"><span class="avatar">${esc(other.name[0] ?? "?")}</span><div><b>${esc(other.name)}</b><span>${other.connected ? "在线" : "离线"} · ${other.count} 张手牌</span></div><div class="back-cards" aria-hidden="true">${Array.from({ length: Math.min(other.count, 7) }, () => "<i>U!</i>").join("")}</div><span class="turn-pill ${!myTurn && !ended ? "current" : ""}">${!myTurn && !ended ? "TA 的回合" : "对手"}</span></div><div class="table-center"><div class="draw-pile" aria-hidden="true"><span>UNO</span><small>NO MERCY</small></div><div class="discard">${v.top ? card(v.top) : ""}</div><div class="table-info"><span class="eyebrow">CURRENT COLOR</span><b class="color-indicator ${v.color}">${v.color ? colorNames[v.color] : ""}</b><span>${v.penalty ? `累计罚抽 <strong>+${v.penalty}</strong>` : "匹配颜色、数字或图案"}</span></div></div><div class="action-receipt" data-tone="${feedback?.tone ?? "normal"}"><span>刚刚发生</span><b>${esc(feedback?.title ?? "手牌已发好")}</b><p>${esc(feedback?.detail ?? "每人 7 张，准备开始。")}</p></div><div class="table-status ${myTurn && !paused && !ended ? "your-turn" : ""}" aria-live="polite">${ended ? "本局结束" : paused ? "Ⅱ 对局已暂停" : presenting ? "正在展示本次操作…" : myTurn ? "轮到你了，出一张好牌。" : "等待对手出牌…"}</div></section><div class="round-notice">${paused && !ended ? `<section class="pause-banner"><div><b>${!online ? "网络已断开，正在尝试重连" : v.disconnected ? "对手断线，对局已暂停" : "规则时间，慢慢看。"}</b><p>${v.disconnected ? `<span id="countdown"></span> · 原标签页可重连` : v.pausedBy === v.me ? "你发起了暂停，准备好后继续。" : "对手正在查看规则，请等待对方继续。"}</p></div>${v.pausedBy === v.me ? `<button class="primary" id="resume" ${!online || busy ? "disabled" : ""}>继续游戏 →</button>` : ""}</section>` : ""}${ended ? `<section class="result"><div><span class="eyebrow">THAT’S A WRAP</span><h2>${v.winner === v.me ? "这局，你赢了！" : "这局，让 TA 赢了。"}</h2><p>${esc(v.reason)}</p></div><div>${v.closed ? '<button class="primary" id="back-home">回到首页 →</button>' : `<button class="primary" id="rematch" ${me.rematch || busy || !online ? "disabled" : ""}>${me.rematch ? "已准备，等待对手…" : "再来一局 ↗"}</button><p class="small-note">${other.rematch ? "对方已准备好" : "双方同意后重新发牌"}</p>`}</div></section>` : ""}</div><section class="hand-section"><div class="hand-heading"><div><h3>你的手牌 <span>${me.count}</span><strong class="hand-turn-tag"></strong></h3><p>${!canAct ? "" : myTurn ? (v.roulette ? "选择轮盘颜色，然后抽到该颜色为止。" : v.penalty ? `叠加 +${v.lastPenalty} 或更大的罚抽牌，或接受罚抽。` : "亮起的牌可以打出。") : "想好下一张，轮到你就出。"}</p></div><div class="hand-actions">${canAct && v.canCatch ? '<button class="danger" id="catch">抓漏喊 UNO</button>' : ""}<button class="uno-button" id="uno" ${!canAct || me.count !== 1 ? "disabled" : ""}>UNO!</button></div><nav class="hand-navigation" aria-label="手牌翻页"><button class="ghost compact" id="hand-prev" aria-label="上一组手牌">‹</button><span class="hand-page-label" role="status" aria-live="polite"></span><button class="ghost compact" id="hand-next" aria-label="下一组手牌">›</button><button class="ghost compact" id="hand-playable" hidden>查看可出牌</button></nav></div><div class="hand" role="group" aria-label="你的手牌"></div><div class="play-controls"><label class="check-label"><input id="auto-uno" type="checkbox" ${uno ? "checked" : ""}> 出牌时喊 UNO</label><div class="button-row">${showChallenge ? `<button class="ghost penalty-action" id="challenge" ${!canAct ? "disabled" : ""}><strong class="penalty-label">质疑</strong><span class="penalty-outcome">成功：对方抽 ${v.penalty} 张</span><span class="penalty-outcome">失败：你抽 ${v.penalty + 2} 张</span></button>` : ""}${myTurn && v.roulette ? `<button class="primary" id="roulette" ${!canAct ? "disabled" : ""}>选择轮盘颜色 →</button>` : `<button class="primary${v.penalty ? " penalty-action" : ""}" id="draw" ${!canAct || !myTurn || (!v.penalty && v.playable.length > 0) ? "disabled" : ""}>${v.penalty ? `<strong class="penalty-label">接受</strong><span class="penalty-outcome">你抽 ${v.penalty} 张</span>` : "抽到可出的牌 ↓"}</button>`}</div></div></section><details class="activity"><summary>本局动态 <span>${esc(v.log.at(-1) ?? "")}</span></summary><ol>${v.log
+  return `<main class="game" data-opening="${roundOpening}" data-turn="${turnInfo(v).mode}"><div class="game-heading"><div><span class="eyebrow">THE FRIENDLY SHOWDOWN</span><h2>这一局，不留情。</h2></div><button class="ghost" id="pause" ${ended ? "disabled" : ""}>Ⅱ 暂停 / 看规则</button></div><section class="turn-banner" role="status" aria-live="polite"><span class="turn-icon">${turnInfo(v).icon}</span><div><b>${esc(turnInfo(v).title)}</b><p>${esc(turnInfo(v).hint)}</p></div></section><section class="table"><div class="opponent"><span class="avatar">${esc(other.name[0] ?? "?")}</span><div><b>${esc(other.name)}</b><span>${other.connected ? "在线" : "离线"} · ${other.count} 张手牌</span></div><div class="back-cards" aria-hidden="true">${Array.from({ length: Math.min(other.count, 7) }, () => "<i>U!</i>").join("")}</div><span class="turn-pill ${!myTurn && !ended ? "current" : ""}">${!myTurn && !ended ? "TA 的回合" : "对手"}</span></div><div class="table-center"><div class="draw-pile" aria-hidden="true"><span>UNO</span><small>NO MERCY</small></div><div class="discard">${v.top ? card(v.top) : ""}</div><div class="table-info"><span class="eyebrow">CURRENT COLOR</span><b class="color-indicator ${v.color}">${v.color ? colorNames[v.color] : ""}</b><span>${v.penalty ? `累计罚抽 <strong>+${v.penalty}</strong>` : "匹配颜色、数字或图案"}</span></div></div><div class="action-receipt" data-tone="${feedback?.tone ?? "normal"}"><span>刚刚发生</span><b>${esc(feedback?.title ?? "手牌已发好")}</b><p>${esc(feedback?.detail ?? "每人 7 张，准备开始。")}</p></div><div class="table-status ${myTurn && !paused && !ended ? "your-turn" : ""}" aria-live="polite">${ended ? "本局结束" : paused ? "Ⅱ 对局已暂停" : presenting ? "正在展示本次操作…" : myTurn ? "轮到你了，出一张好牌。" : "等待对手出牌…"}</div></section><div class="round-notice">${paused && !ended ? `<section class="pause-banner"><div><b>${!online ? "网络已断开，正在尝试重连" : v.disconnected ? "对手断线，对局已暂停" : "规则时间，慢慢看。"}</b><p>${v.disconnected ? `<span id="countdown"></span> · 原标签页可重连` : v.pausedBy === v.me ? "你发起了暂停，准备好后继续。" : "对手正在查看规则，请等待对方继续。"}</p></div>${v.pausedBy === v.me ? `<button class="primary" id="resume" ${!online || busy ? "disabled" : ""}>继续游戏 →</button>` : ""}</section>` : ""}${ended ? `<section class="result"><div><span class="eyebrow">THAT’S A WRAP</span><h2>${v.winner === v.me ? "这局，你赢了！" : "这局，让 TA 赢了。"}</h2><p>${esc(v.reason)}</p></div><div>${v.closed ? '<button class="primary" id="back-home">回到首页 →</button>' : `<button class="primary" id="rematch" ${me.rematch || busy || !online ? "disabled" : ""}>${me.rematch ? "已准备，等待对手…" : "再来一局 ↗"}</button><p class="small-note">${other.rematch ? "对方已准备好" : "双方同意后重新发牌"}</p>`}</div></section>` : ""}</div><section class="hand-section"><div class="hand-heading"><div><h3>你的手牌 <span>${me.count}</span><strong class="hand-turn-tag"></strong></h3><p>${!canAct ? "" : myTurn ? (v.roulette ? "选择轮盘颜色，然后抽到该颜色为止。" : v.penalty ? `叠加 +${v.lastPenalty} 或更大的罚抽牌，或接受罚抽。` : "亮起的牌可以打出。") : "想好下一张，轮到你就出。"}</p></div><div class="hand-actions">${canAct && v.canCatch ? '<button class="danger" id="catch">抓漏喊 UNO</button>' : ""}<button class="uno-button" id="uno" ${!canAct || me.count !== 1 ? "disabled" : ""}>UNO!</button></div><nav class="hand-navigation" aria-label="手牌翻页"><button class="ghost compact" id="hand-prev" aria-label="上一组手牌">‹</button><span class="hand-page-label" role="status" aria-live="polite"></span><button class="ghost compact" id="hand-next" aria-label="下一组手牌">›</button><button class="ghost compact" id="hand-playable" hidden>查看可出牌</button></nav></div><div class="hand" role="group" aria-label="你的手牌"></div><div class="play-controls"><label class="check-label"><input id="auto-uno" type="checkbox" ${uno ? "checked" : ""}> 出牌时喊 UNO</label><div class="button-row">${showChallenge ? `<button class="ghost penalty-action" id="challenge" ${!canAct ? "disabled" : ""}><strong class="penalty-label">质疑</strong><span class="penalty-outcome">成功：对方抽 ${v.penalty} 张</span><span class="penalty-outcome">失败：你抽 ${v.penalty + 2} 张</span></button>` : ""}${myTurn && v.roulette ? `<button class="primary" id="roulette" ${!canAct ? "disabled" : ""}>选择轮盘颜色 →</button>` : `<button class="primary${v.penalty ? " penalty-action" : ""}" id="draw" ${!canAct || !myTurn || (!v.penalty && v.playable.length > 0) ? "disabled" : ""}>${v.penalty ? `<strong class="penalty-label">接受</strong><span class="penalty-outcome">你抽 ${v.penalty} 张</span>` : "抽到可出的牌 ↓"}</button>`}</div></div></section><details class="activity"><summary>本局动态 <span>${esc(v.log.at(-1) ?? "")}</span></summary>${debugControls(v)}<ol>${v.log
     .slice()
     .reverse()
     .map((l) => `<li>${esc(l)}</li>`)
@@ -455,6 +550,9 @@ function render(force = false) {
     syncControls();
     return;
   }
+  if (debugRequest && debugRequest.room !== state?.room) debugRequest = null;
+  if (debugSelection && debugSelection.room !== state?.room)
+    debugSelection = null;
   handObserver?.disconnect();
   const handScrollTop = app.querySelector<HTMLElement>(".hand")?.scrollTop ?? 0;
   const gameScreen = !!state && state.phase !== "waiting";
@@ -505,6 +603,14 @@ function render(force = false) {
   on("rematch", "click", () => action({ type: "rematch" }));
   on("draw", "click", () => action({ type: "draw" }));
   on("challenge", "click", () => action({ type: "challenge" }));
+  on("debug-round", "change", (e) => {
+    if (state)
+      debugSelection = {
+        room: state.room,
+        roundId: (e.target as HTMLSelectElement).value,
+      };
+  });
+  on("export-debug", "click", () => void exportDebug());
   on("uno", "click", () => action({ type: "uno" }));
   on("catch", "click", () => action({ type: "catch" }));
   on("auto-uno", "change", (e) => {

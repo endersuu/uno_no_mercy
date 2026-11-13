@@ -444,6 +444,40 @@ body.game-screen {
 .game-screen .activity ol {
   margin: 5px 0;
 }
+.game-screen .debug-export {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.game-screen .debug-export-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.game-screen .debug-export-controls label {
+  font-weight: 700;
+}
+.game-screen .debug-export select,
+.game-screen .debug-export button {
+  min-width: 0;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+.game-screen .debug-export select {
+  flex: 1 1 110px;
+  font-size: 16px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid #a8bb93;
+  border-radius: 8px;
+}
+.game-screen .debug-export p {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
 .game-screen .game-effect,
 .game-screen .game-effect[data-effect="play"] {
   top: 64px;
