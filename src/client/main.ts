@@ -44,6 +44,43 @@ let handPageSize = 1;
 let handRound: string | null = null;
 let handObserver: ResizeObserver | null = null;
 let restoringSeat = false;
+interface Recovery {
+  room: string;
+  token: string;
+  name: string;
+  until: number;
+  timer?: ReturnType<typeof setTimeout>;
+}
+let recovery: Recovery | null = null;
+let stoppedRecoveryRoom: string | null = null;
+function cancelRecovery() {
+  if (recovery?.timer) clearTimeout(recovery.timer);
+  recovery = null;
+}
+function retryRecovery(attempt: Recovery) {
+  if (recovery !== attempt) return;
+  if (attempt.timer) clearTimeout(attempt.timer);
+  if (Date.now() >= attempt.until) {
+    stoppedRecoveryRoom = attempt.room;
+    cancelRecovery();
+    applyImmediately(null);
+    toast("未能恢复席位，请关闭同一房间的其他页面后重新加入。");
+    return;
+  }
+  attempt.timer = setTimeout(() => {
+    if (recovery !== attempt) return;
+    if (
+      roomFromUrl() !== attempt.room ||
+      get(`uno-token-${attempt.room}`) !== attempt.token
+    ) {
+      cancelRecovery();
+      render();
+      return;
+    }
+    if (online && !joining) void enter("join", attempt.name, attempt.room);
+    else retryRecovery(attempt);
+  }, 1500);
+}
 let latest: View | null = null;
 let generation = 0;
 let motionAbort = new AbortController();
@@ -56,7 +93,7 @@ function syncControls() {
   app.classList.toggle("is-pending", busy);
   app.dataset.animating = String(presenting);
   updateTurnUI();
-  if (busy || presenting) {
+  if (busy || presenting || recovery) {
     app
       .querySelectorAll<HTMLButtonElement>(
         ".hand button, .hand-actions button, .hand-navigation button, .play-controls button, #rematch, #entry button",
@@ -239,7 +276,7 @@ function toast(message: string) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove("show"), 4500);
 }
-async function command(data: object): Promise<Reply> {
+async function command(data: object, recovering = false): Promise<Reply> {
   if (!socket.connected) {
     toast("连接已断开，正在重连…");
     return { ok: false, error: "offline" };
@@ -250,7 +287,8 @@ async function command(data: object): Promise<Reply> {
     const r = (await socket
       .timeout(6000)
       .emitWithAck("command", data)) as Reply;
-    if (!r.ok) toast(r.error);
+    if (!r.ok && !(recovering && r.error === "这个席位已在另一个页面连接。"))
+      toast(r.error);
     return r;
   } catch {
     toast("请求未确认，正在同步房间状态…");
@@ -262,7 +300,12 @@ async function command(data: object): Promise<Reply> {
   }
 }
 async function action(a: Action | { type: "pause" | "resume" | "rematch" }) {
-  if (!state || busy || (presenting && !["pause", "resume"].includes(a.type)))
+  if (
+    !state ||
+    busy ||
+    recovery ||
+    (presenting && !["pause", "resume"].includes(a.type))
+  )
     return false;
   if (!["pause", "resume", "rematch"].includes(a.type))
     pendingAction = a as Action;
@@ -281,6 +324,13 @@ function card(c: Card, button = false, enabled = false) {
   return cardMarkup(c, button, enabled, freshCards.has(c.id));
 }
 function turnInfo(v: View) {
+  if (recovery)
+    return {
+      mode: "paused",
+      title: "正在恢复连接…",
+      hint: "等待旧连接断开，正在自动恢复原来的席位。",
+      icon: "Ⅱ",
+    };
   if (v.phase === "finished")
     return {
       mode: "finished",
@@ -368,7 +418,7 @@ function header() {
 }
 function home() {
   const room = roomFromUrl();
-  return `<main class="landing"><section class="intro"><span class="eyebrow"><i></i> TWO PLAYERS. ZERO MERCY.</span><h1>朋友局。<br><span>不留情。</span></h1><p class="intro-copy">一条链接，一位朋友。<br>把好运留在手里，把 +10 送给对方。</p><div class="hero-cards" aria-hidden="true">${card({ id: "a", kind: "number", color: "green", value: 7 })}${card({ id: "b", kind: "wild10", color: null })}${card({ id: "c", kind: "draw4", color: "red" })}</div><div class="pills"><span>2 人实时对战</span><span>无需登录</span><span>168 张 · No Mercy</span></div></section><section class="entry-panel"><span class="eyebrow">${room ? "YOU’RE INVITED" : "THE TABLE IS YOURS"}</span><h2>${room ? "有位朋友，在等你。" : "开一桌，叫上朋友。"}</h2><p class="muted">${room ? "输入昵称，加入这场不留情的对决。" : "创建专属房间，把邀请链接发给 TA。"}</p><form id="entry"><label for="name">你的昵称 <span>可选</span></label><input id="name" name="name" maxlength="16" placeholder="今天怎么称呼你？" value="${esc(get("uno-name") ?? "")}" autocomplete="nickname"><button class="primary wide" type="submit" ${!online || busy ? "disabled" : ""}>${busy ? "正在进入…" : room ? "加入房间 →" : "创建房间 →"}</button></form><div class="entry-divider"></div><div class="entry-detail"><span>01</span><div><b>只有你们两个人</b><p>私密房间，分享链接即可入座</p></div></div><div class="entry-detail"><span>02</span><div><b>再来一局？双方说了算</b><p>不记分，不排名，只管享受对局</p></div></div>${room ? '<button class="text-button" id="new-room">创建自己的房间 ↗</button>' : '<p class="small-note">准备好接下那张 +10 了吗？</p>'}</section></main><section class="quick-rules"><div><span>01 / STACK IT</span><h3>罚抽，可以加倍。</h3><p>+2 → +4 → +6，谁接不住谁抽。</p></div><div><span>02 / SWITCH IT</span><h3>一张 7，局势反转。</h3><p>交换全部手牌，好牌也留不住。</p></div><div><span>03 / NO MERCY</span><h3>25 张，就此出局。</h3><p>别让手里的牌变成一座山。</p></div></section>`;
+  return `<main class="landing"><section class="intro"><span class="eyebrow"><i></i> TWO PLAYERS. ZERO MERCY.</span><h1>朋友局。<br><span>不留情。</span></h1><p class="intro-copy">一条链接，一位朋友。<br>把好运留在手里，把 +10 送给对方。</p><div class="hero-cards" aria-hidden="true">${card({ id: "a", kind: "number", color: "green", value: 7 })}${card({ id: "b", kind: "wild10", color: null })}${card({ id: "c", kind: "draw4", color: "red" })}</div><div class="pills"><span>2 人实时对战</span><span>无需登录</span><span>168 张 · No Mercy</span></div></section><section class="entry-panel"><span class="eyebrow">${room ? "YOU’RE INVITED" : "THE TABLE IS YOURS"}</span><h2>${room ? "有位朋友，在等你。" : "开一桌，叫上朋友。"}</h2><p class="muted" ${recovery ? 'id="reconnect-status" role="status"' : ""}>${recovery ? "正在恢复原来的席位…等待旧连接断开，会自动重试。若同一房间还有其他页面，请先关闭。" : room ? "输入昵称，加入这场不留情的对决。" : "创建专属房间，把邀请链接发给 TA。"}</p><form id="entry"><label for="name">你的昵称 <span>可选</span></label><input id="name" name="name" maxlength="16" placeholder="今天怎么称呼你？" value="${esc(get("uno-name") ?? "")}" autocomplete="nickname"><button class="primary wide" type="submit" ${!online || busy || recovery ? "disabled" : ""}>${recovery ? "正在恢复席位…" : busy ? "正在进入…" : room ? "加入房间 →" : "创建房间 →"}</button></form><div class="entry-divider"></div><div class="entry-detail"><span>01</span><div><b>只有你们两个人</b><p>私密房间，分享链接即可入座</p></div></div><div class="entry-detail"><span>02</span><div><b>再来一局？双方说了算</b><p>不记分，不排名，只管享受对局</p></div></div>${room ? '<button class="text-button" id="new-room">创建自己的房间 ↗</button>' : '<p class="small-note">准备好接下那张 +10 了吗？</p>'}</section></main><section class="quick-rules"><div><span>01 / STACK IT</span><h3>罚抽，可以加倍。</h3><p>+2 → +4 → +6，谁接不住谁抽。</p></div><div><span>02 / SWITCH IT</span><h3>一张 7，局势反转。</h3><p>交换全部手牌，好牌也留不住。</p></div><div><span>03 / NO MERCY</span><h3>25 张，就此出局。</h3><p>别让手里的牌变成一座山。</p></div></section>`;
 }
 function waiting(v: View) {
   return `<main class="waiting"><span class="eyebrow">ROOM / ${esc(v.room)}</span><h1>座位留好了。<br><span>就差你的朋友。</span></h1><p class="muted">${v.disconnected ? "对方暂时离线，保留席位等待重连。" : "对方打开链接加入后，游戏自动开始。"}</p>${v.disconnected ? '<p id="countdown" class="muted"></p>' : ""}<div class="waiting-seats"><div><span class="avatar">${esc(v.players[v.me].name[0])}</span><b>${esc(v.players[v.me].name)} <small>你</small></b><span class="ready-tag">已入座</span></div><span class="versus">VS</span><div><span class="avatar empty">＋</span><b>虚位以待</b><span class="muted">等一位够胆的朋友</span></div></div><div class="invite"><input aria-label="邀请链接" readonly value="${esc(location.href)}"><button class="primary" id="copy-link">复制邀请链接 ↗</button></div><p class="small-note">断线席位保留 60 秒 · 空房间自动销毁</p></main>`;
@@ -379,7 +429,7 @@ function table(v: View) {
     myTurn = v.turn === v.me,
     paused = v.pausedBy !== null || v.disconnected || !online,
     ended = v.phase === "finished",
-    canAct = !paused && !ended && !busy && !presenting;
+    canAct = !paused && !ended && !busy && !presenting && !recovery;
   return `<main class="game" data-opening="${roundOpening}" data-turn="${turnInfo(v).mode}"><div class="game-heading"><div><span class="eyebrow">THE FRIENDLY SHOWDOWN</span><h2>这一局，不留情。</h2></div><button class="ghost" id="pause" ${ended ? "disabled" : ""}>Ⅱ 暂停 / 看规则</button></div><section class="turn-banner" role="status" aria-live="polite"><span class="turn-icon">${turnInfo(v).icon}</span><div><b>${esc(turnInfo(v).title)}</b><p>${esc(turnInfo(v).hint)}</p></div></section><section class="table"><div class="opponent"><span class="avatar">${esc(other.name[0] ?? "?")}</span><div><b>${esc(other.name)}</b><span>${other.connected ? "在线" : "离线"} · ${other.count} 张手牌</span></div><div class="back-cards" aria-hidden="true">${Array.from({ length: Math.min(other.count, 7) }, () => "<i>U!</i>").join("")}</div><span class="turn-pill ${!myTurn && !ended ? "current" : ""}">${!myTurn && !ended ? "TA 的回合" : "对手"}</span></div><div class="table-center"><div class="draw-pile" aria-hidden="true"><span>UNO</span><small>NO MERCY</small></div><div class="discard">${v.top ? card(v.top) : ""}</div><div class="table-info"><span class="eyebrow">CURRENT COLOR</span><b class="color-indicator ${v.color}">${v.color ? colorNames[v.color] : ""}</b><span>${v.penalty ? `累计罚抽 <strong>+${v.penalty}</strong>` : "匹配颜色、数字或图案"}</span></div></div><div class="action-receipt" data-tone="${feedback?.tone ?? "normal"}"><span>刚刚发生</span><b>${esc(feedback?.title ?? "手牌已发好")}</b><p>${esc(feedback?.detail ?? "每人 7 张，准备开始。")}</p></div><div class="table-status ${myTurn && !paused && !ended ? "your-turn" : ""}" aria-live="polite">${ended ? "本局结束" : paused ? "Ⅱ 对局已暂停" : presenting ? "正在展示本次操作…" : myTurn ? "轮到你了，出一张好牌。" : "等待对手出牌…"}</div></section><div class="round-notice">${paused && !ended ? `<section class="pause-banner"><div><b>${!online ? "网络已断开，正在尝试重连" : v.disconnected ? "对手断线，对局已暂停" : "规则时间，慢慢看。"}</b><p>${v.disconnected ? `<span id="countdown"></span> · 原标签页可重连` : v.pausedBy === v.me ? "你发起了暂停，准备好后继续。" : "对手正在查看规则，请等待对方继续。"}</p></div>${v.pausedBy === v.me ? `<button class="primary" id="resume" ${!online || busy ? "disabled" : ""}>继续游戏 →</button>` : ""}</section>` : ""}${ended ? `<section class="result"><div><span class="eyebrow">THAT’S A WRAP</span><h2>${v.winner === v.me ? "这局，你赢了！" : "这局，让 TA 赢了。"}</h2><p>${esc(v.reason)}</p></div><div>${v.closed ? '<button class="primary" id="back-home">回到首页 →</button>' : `<button class="primary" id="rematch" ${me.rematch || busy || !online ? "disabled" : ""}>${me.rematch ? "已准备，等待对手…" : "再来一局 ↗"}</button><p class="small-note">${other.rematch ? "对方已准备好" : "双方同意后重新发牌"}</p>`}</div></section>` : ""}</div><section class="hand-section"><div class="hand-heading"><div><h3>你的手牌 <span>${me.count}</span><strong class="hand-turn-tag"></strong></h3><p>${!canAct ? "" : myTurn ? (v.roulette ? "选择轮盘颜色，然后抽到该颜色为止。" : v.penalty ? `叠加 +${v.lastPenalty} 或更大的罚抽牌，或接受罚抽。` : "亮起的牌可以打出。") : "想好下一张，轮到你就出。"}</p></div><div class="hand-actions">${canAct && v.canCatch ? '<button class="danger" id="catch">抓漏喊 UNO</button>' : ""}<button class="uno-button" id="uno" ${!canAct || me.count !== 1 ? "disabled" : ""}>UNO!</button></div><nav class="hand-navigation" aria-label="手牌翻页"><button class="ghost compact" id="hand-prev" aria-label="上一组手牌">‹</button><span class="hand-page-label" role="status" aria-live="polite"></span><button class="ghost compact" id="hand-next" aria-label="下一组手牌">›</button><button class="ghost compact" id="hand-playable" hidden>查看可出牌</button></nav></div><div class="hand" role="group" aria-label="你的手牌"></div><div class="play-controls"><label class="check-label"><input id="auto-uno" type="checkbox" ${uno ? "checked" : ""}> 出牌时喊 UNO</label><div class="button-row">${myTurn && v.challenge ? `<button class="ghost" id="challenge" ${!canAct ? "disabled" : ""}>质疑 +4</button>` : ""}${myTurn && v.roulette ? `<button class="primary" id="roulette" ${!canAct ? "disabled" : ""}>选择轮盘颜色 →</button>` : `<button class="primary" id="draw" ${!canAct || !myTurn || (!v.penalty && v.playable.length > 0) ? "disabled" : ""}>${v.penalty ? `接受 +${v.penalty} 张` : "抽到可出的牌"} ↓</button>`}</div></div></section><details class="activity"><summary>本局动态 <span>${esc(v.log.at(-1) ?? "")}</span></summary><ol>${v.log
     .slice()
     .reverse()
@@ -455,6 +505,8 @@ function render(force = false) {
     }
   });
   on("new-room", "click", () => {
+    if (busy || joining) return;
+    cancelRecovery();
     history.replaceState(null, "", "/");
     render();
   });
@@ -527,7 +579,8 @@ function renderHand() {
     v.pausedBy === null &&
     v.phase === "playing" &&
     !busy &&
-    !presenting;
+    !presenting &&
+    !recovery;
   hand.innerHTML = visible
     .map((c) => card(c, true, canAct && v.playable.includes(c.id)))
     .join("");
@@ -581,24 +634,53 @@ async function enter(
   room: string | null,
 ) {
   if (joining) return;
-  joining = true;
+  stoppedRecoveryRoom = null;
   const token = room ? get(`uno-token-${room}`) : null;
+  if (type === "join" && room && token) {
+    if (recovery?.room !== room || recovery.token !== token) {
+      cancelRecovery();
+      recovery = { room, token, name, until: Date.now() + 55_000 };
+    }
+    if (Date.now() >= recovery.until) {
+      retryRecovery(recovery);
+      return;
+    }
+  } else cancelRecovery();
+  const attempt = recovery;
+  joining = true;
   restoringSeat = !!token;
-  const r = await command({
-    type,
-    name,
-    ...(room ? { room } : {}),
-    ...(token ? { token } : {}),
-  });
-  if (r.ok && r.room && r.token) {
-    set(`uno-token-${r.room}`, r.token);
-    history.replaceState(null, "", `/?room=${encodeURIComponent(r.room)}`);
-    render();
-  } else if (!r.ok && state) {
-    state = null;
+  try {
+    const r = await command(
+      {
+        type,
+        name,
+        ...(room ? { room } : {}),
+        ...(token ? { token } : {}),
+      },
+      !!attempt,
+    );
+    if (attempt && recovery !== attempt) return;
+    if (r.ok && r.room && r.token) {
+      cancelRecovery();
+      set(`uno-token-${r.room}`, r.token);
+      history.replaceState(null, "", `/?room=${encodeURIComponent(r.room)}`);
+    } else if (!r.ok) {
+      const retry =
+        attempt &&
+        ["这个席位已在另一个页面连接。", "offline", "timeout"].includes(
+          r.error,
+        );
+      if (!retry) {
+        if (attempt) stoppedRecoveryRoom = attempt.room;
+        cancelRecovery();
+      }
+      applyImmediately(null);
+      if (retry) retryRecovery(attempt);
+    }
+  } finally {
+    joining = false;
     render();
   }
-  joining = false;
 }
 async function openRules() {
   if (online && state?.phase === "playing" && state.pausedBy === null) {
@@ -615,6 +697,7 @@ function chooseColor(c: Card | null) {
 }
 async function leaveRoom() {
   if (busy) return;
+  cancelRecovery();
   const r = await command({ type: "leave" });
   if (!r.ok) return;
   if (state) sessionStorage.removeItem(`uno-token-${state.room}`);
@@ -708,7 +791,7 @@ socket.on("connect", () => {
   online = true;
   render();
   const room = roomFromUrl();
-  if (room && get(`uno-token-${room}`))
+  if (room && room !== stoppedRecoveryRoom && get(`uno-token-${room}`))
     void enter("join", get("uno-name") ?? "匿名玩家", room);
 });
 socket.on("disconnect", () => {

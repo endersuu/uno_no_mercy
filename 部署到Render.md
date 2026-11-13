@@ -1,5 +1,7 @@
 # 部署到 Render
 
+本项目已部署到 **https://uno-no-mercy-8skm.onrender.com**，使用 Free Web Service、Node.js 24 和单实例。无需再创建服务即可直接玩。以下说明也适用于自行部署副本。
+
 [打开一键部署入口](https://render.com/deploy?repo=https://github.com/endersuu/uno_no_mercy)
 
 仓库中的 `render.yaml` 已配置 Node.js 24、Free Web Service、构建和启动命令，以及 `/health` 健康检查。不需要数据库、游戏密钥或自己购买域名。
@@ -60,7 +62,7 @@
 
 默认不信任 `X-Forwarded-For`。本机直连按 TCP 对端 IP 限流；在 Render（`RENDER=true`）上，未核实反向代理链时只启用全局和单连接限制，避免把所有玩家当成同一个代理 IP。确认平台追加请求头的方式及可信代理跳数后，才设置 `TRUST_PROXY_HOPS`（1–8）；不要盲目设为 1，也不要直接取可伪造的最左侧 IP。代理配置错误会导致绕过限流或误伤玩家。
 
-这些措施控制应用的资源消耗，不能保证遭受分布式攻击时仍可访问，也不能阻止流量到达 Render。部署时仍需在平台侧核实当前方案的 DDoS 防护、带宽配额和告警；本项目尚未通过控制台验证这些设置。更高强度的攻击需要支持 WebSocket 的边缘防护，并防止攻击者绕过边缘直连源站。绑卡不代表已启用这些能力，当前部署配置仍为 Free。
+这些措施控制应用的资源消耗，不能保证遭受分布式攻击时仍可访问。Render [官方说明](https://render.com/docs/ddos-protection)表示所有应用自动获得 Cloudflare DDoS 防护，[FAQ](https://render.com/docs/faq)说明不收取 DDoS 攻击产生的带宽费用。当前服务仍为 Free；绑卡后普通出站流量和构建额度超额可能收费，应结合账号用量和告警查看，不能把 Free 理解为账单硬上限。尚未调整账号级预算或告警配置。
 
 ## 排错
 
