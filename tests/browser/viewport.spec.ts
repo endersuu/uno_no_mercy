@@ -32,8 +32,8 @@ async function assertBoardFits(page: Page) {
       ".table-info",
       ".hand-heading",
       ".play-controls",
-      ".challenge-outcomes",
-      ".challenge-outcomes span",
+      ".play-controls .penalty-label",
+      ".play-controls .penalty-outcome",
       "#pause",
       "#draw",
       "#auto-uno",
@@ -732,49 +732,61 @@ for (const viewport of [
   { width: 390, height: 844 },
   { width: 320, height: 568 },
 ]) {
-  test(`stacked challenge previews show the full penalty and fit ${viewport.width}px phones`, async ({
+  test(`stacked challenge buttons show the full penalty and fit ${viewport.width}px phones`, async ({
     page,
   }) => {
     await page.setViewportSize(viewport);
     let view = { ...denseSnapshot(7), penalty: 6 };
     await denseGame(page, view);
-    for (const penalty of [6, 12]) {
+    for (const penalty of [6, 8, 12]) {
       view = { ...view, revision: view.revision + 1, penalty };
       await page.evaluate((next) => {
         (window as any).__setViewportState(next);
       }, view);
-      const outcomes = page.locator("#challenge-outcomes");
-      await expect(outcomes.locator("span").nth(0)).toHaveText(
-        `成功：对手抽 ${penalty} 张，你抽 0 张`,
+      const challenge = page.locator("#challenge");
+      const draw = page.locator("#draw");
+      await expect(challenge.locator(".penalty-label")).toHaveText("质疑");
+      await expect(challenge.locator(".penalty-outcome")).toHaveCount(2);
+      await expect(challenge.locator(".penalty-outcome").nth(0)).toHaveText(
+        `成功：对方抽 ${penalty} 张`,
       );
-      await expect(outcomes.locator("span").nth(1)).toHaveText(
+      await expect(challenge.locator(".penalty-outcome").nth(1)).toHaveText(
         `失败：你抽 ${penalty + 2} 张`,
       );
-      await expect(page.locator("#draw")).toHaveText(`接受 +${penalty} 张 ↓`);
-      await expect(page.locator("#challenge")).toHaveAttribute(
-        "aria-describedby",
-        "challenge-outcomes",
+      await expect(draw.locator(".penalty-label")).toHaveText("接受");
+      await expect(draw.locator(".penalty-outcome")).toHaveCount(1);
+      await expect(draw.locator(".penalty-outcome")).toHaveText(
+        `你抽 ${penalty} 张`,
       );
+      await expect(page.locator("#challenge-outcomes")).toHaveCount(0);
       await assertBoardFits(page);
       const layout = await page.locator(".play-controls").evaluate((node) => {
-        const controls = node.getBoundingClientRect();
-        const hints = [
-          ...node.querySelectorAll<HTMLElement>(".challenge-outcomes span"),
-        ];
-        const actions = [
-          ...node.querySelectorAll<HTMLElement>("button, .check-label"),
-        ].map((action) => action.getBoundingClientRect());
-        return hints.every((hint) => {
-          const box = hint.getBoundingClientRect();
-          return (
-            box.left >= controls.left - 1 &&
-            box.right <= controls.right + 1 &&
-            hint.scrollWidth <= hint.clientWidth + 1 &&
-            actions.every((action) => box.bottom <= action.top + 1)
-          );
-        });
+        return [...node.querySelectorAll<HTMLElement>("#challenge, #draw")].every(
+          (button) => {
+            const bounds = button.getBoundingClientRect();
+            const labels = [
+              ...button.querySelectorAll<HTMLElement>(
+                ".penalty-label, .penalty-outcome",
+              ),
+            ];
+            return labels.every((label) => {
+              const text = document.createRange();
+              text.selectNodeContents(label);
+              return (
+                label.scrollWidth <= label.clientWidth + 1 &&
+                [...text.getClientRects()].every(
+                  (box) =>
+                    box.left >= bounds.left - 1 &&
+                    box.right <= bounds.right + 1 &&
+                    box.top >= bounds.top - 1 &&
+                    box.bottom <= bounds.bottom + 1,
+                )
+              );
+            });
+          },
+        );
       });
-      expect(layout, "challenge outcomes fit above the action buttons").toBe(
+      expect(layout, "penalty labels and outcomes fit inside their buttons").toBe(
         true,
       );
     }
