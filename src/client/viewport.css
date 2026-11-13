@@ -566,7 +566,7 @@ body.game-screen {
     gap: 4px;
   }
   .game-screen .connection,
-  .game-screen .brand > span:last-child {
+  .game-screen .brand-title {
     display: none;
   }
   .game-screen header .compact {

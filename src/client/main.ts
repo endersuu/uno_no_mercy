@@ -22,6 +22,13 @@ import {
   transition,
   type Feedback,
 } from "./motion";
+declare const __APP_VERSION__: string;
+declare const __BUILD_COMMIT__: string;
+// Direct esbuild fixtures do not use Vite's build-time metadata.
+const appVersion =
+  typeof __APP_VERSION__ === "string" ? `v${__APP_VERSION__}` : "开发版";
+const buildCommit =
+  typeof __BUILD_COMMIT__ === "string" ? __BUILD_COMMIT__ : "local";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const announcement = document.createElement("div");
 announcement.id = "game-announcement";
@@ -502,7 +509,7 @@ function updateSoundButton() {
 }
 
 function header() {
-  return `<header><a href="/" class="brand" id="brand"><span class="brand-mark">U<span>!</span></span><span>UNO<small>NO MERCY</small></span></a><div class="header-actions"><span class="connection"><i class="${online ? "" : "off"}"></i>${online ? "已连接" : "连接中"}</span><button class="ghost compact sound-toggle" id="toggle-sound" aria-label="切换游戏音效" aria-pressed="${gameAudio.enabled}">${soundLabel()}</button><button class="ghost compact" id="open-rules">游戏规则 ↗</button>${state ? '<button class="ghost compact" id="leave-room">离开房间</button>' : ""}</div></header>`;
+  return `<header><a href="/" class="brand" id="brand"><span class="brand-mark">U<span>!</span></span><span class="brand-title">UNO<small>NO MERCY</small></span><span class="app-version" id="app-version" title="当前版本 ${esc(appVersion)} · ${esc(buildCommit)}" aria-label="当前版本 ${esc(appVersion)}，发布标识 ${esc(buildCommit)}"><span>${esc(appVersion)}</span><span>${esc(buildCommit)}</span></span></a><div class="header-actions"><span class="connection"><i class="${online ? "" : "off"}"></i>${online ? "已连接" : "连接中"}</span><button class="ghost compact sound-toggle" id="toggle-sound" aria-label="切换游戏音效" aria-pressed="${gameAudio.enabled}">${soundLabel()}</button><button class="ghost compact" id="open-rules">游戏规则 ↗</button>${state ? '<button class="ghost compact" id="leave-room">离开房间</button>' : ""}</div></header>`;
 }
 function home() {
   const room = roomFromUrl();

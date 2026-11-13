@@ -73,6 +73,19 @@ header {
   letter-spacing: 2px;
   margin-top: 2px;
 }
+.brand .app-version {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  gap: 2px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: 0;
+  color: #586b60;
+  white-space: nowrap;
+}
 .brand-mark {
   background: var(--ink);
   color: var(--accent);
@@ -1645,6 +1658,12 @@ dialog h2 {
   header {
     padding: 0 12px;
   }
+  header .brand-title {
+    display: none;
+  }
+  .brand .app-version {
+    font-size: 9px;
+  }
   .header-actions {
     gap: 4px;
   }
@@ -1729,7 +1748,7 @@ dialog h2 {
   }
 }
 @media (max-width: 380px) {
-  header .brand > span:last-child {
+  header .brand-title {
     display: none;
   }
   .hand-turn-tag {
