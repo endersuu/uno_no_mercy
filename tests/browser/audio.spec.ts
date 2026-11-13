@@ -217,6 +217,145 @@ test("audio resume keeps a fresh cue, while mute, cancellation and expiration di
   expect(result.mutePersisted).toBe(true);
 });
 
+test("a new gesture retries a stuck resume, including interruptions and sound preview", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const param = () => ({
+      value: 0,
+      setValueAtTime() {},
+      linearRampToValueAtTime() {},
+      exponentialRampToValueAtTime() {},
+      cancelScheduledValues() {},
+    });
+    let context: FakeContext;
+    class FakeContext {
+      state = "suspended";
+      currentTime = 0;
+      destination = {};
+      allowResume = false;
+      resumeCalls = 0;
+      started = 0;
+      constructor() {
+        context = this;
+      }
+      resume() {
+        this.resumeCalls++;
+        // Model a browser that leaves a request made before activation pending.
+        // It must not prevent a later request inside a valid tap from succeeding.
+        if (!this.allowResume) return new Promise<void>(() => {});
+        this.state = "running";
+        return Promise.resolve();
+      }
+      createGain() {
+        return { connect() {}, disconnect() {}, gain: param() };
+      }
+      createOscillator() {
+        return {
+          connect() {},
+          disconnect() {},
+          frequency: param(),
+          start: () => this.started++,
+          stop() {},
+        };
+      }
+    }
+    (window as any).AudioContext = FakeContext;
+    const newAudio = () => {
+      localStorage.removeItem("uno-audio");
+      return new (window as any).AudioUnderTest.GameAudio();
+    };
+    const settles = (operation: Promise<void>) =>
+      Promise.race([
+        operation.then(() => true),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), 500),
+        ),
+      ]);
+
+    const audio = newAudio();
+    void audio.unlock();
+    void audio.unlock();
+    const backgroundCalls = context!.resumeCalls;
+    const initiallyReady = audio.ready;
+    context!.allowResume = true;
+    const gestureSettled = await settles(audio.unlock(true));
+    audio.play("turn");
+    const gesture = {
+      ready: audio.ready,
+      calls: context!.resumeCalls,
+      starts: context!.started,
+    };
+
+    context!.state = "interrupted";
+    context!.allowResume = false;
+    void audio.unlock();
+    void audio.unlock();
+    const interruptedBackgroundCalls = context!.resumeCalls;
+    context!.allowResume = true;
+    const interruptedSettled = await settles(audio.unlock(true));
+    audio.play("turn");
+    const interrupted = {
+      ready: audio.ready,
+      calls: context!.resumeCalls,
+      starts: context!.started,
+    };
+
+    context!.state = "interrupted";
+    context!.allowResume = false;
+    void audio.unlock();
+    audio.setEnabled(false);
+    const callsBeforeMuteGesture = context!.resumeCalls;
+    const mutedSettled = await settles(audio.unlock(true));
+    audio.play("turn");
+    const muted = {
+      ready: audio.ready,
+      calls: context!.resumeCalls,
+      starts: context!.started,
+    };
+
+    const previewAudio = newAudio();
+    void previewAudio.unlock();
+    context!.allowResume = true;
+    const previewSettled = await settles(previewAudio.preview());
+    return {
+      backgroundCalls,
+      initiallyReady,
+      gestureSettled,
+      gesture,
+      interruptedBackgroundCalls,
+      interruptedSettled,
+      interrupted,
+      callsBeforeMuteGesture,
+      mutedSettled,
+      muted,
+      previewSettled,
+      previewReady: previewAudio.ready,
+      previewCalls: context!.resumeCalls,
+      previewStarts: context!.started,
+    };
+  });
+  expect(result.backgroundCalls).toBe(1);
+  expect(result.initiallyReady).toBe(false);
+  expect(result.gestureSettled).toBe(true);
+  expect(result.gesture.ready).toBe(true);
+  expect(result.gesture.calls).toBe(2);
+  expect(result.gesture.starts).toBeGreaterThan(0);
+  expect(result.interruptedBackgroundCalls).toBe(3);
+  expect(result.interruptedSettled).toBe(true);
+  expect(result.interrupted.ready).toBe(true);
+  expect(result.interrupted.calls).toBe(4);
+  expect(result.interrupted.starts).toBeGreaterThan(result.gesture.starts);
+  expect(result.mutedSettled).toBe(true);
+  expect(result.muted.ready).toBe(false);
+  expect(result.muted.calls).toBe(result.callsBeforeMuteGesture);
+  expect(result.muted.starts).toBe(result.interrupted.starts);
+  expect(result.previewSettled).toBe(true);
+  expect(result.previewReady).toBe(true);
+  expect(result.previewCalls).toBe(2);
+  expect(result.previewStarts).toBeGreaterThan(0);
+});
+
 test("public card events route skip and swap independently from turn feedback, and opening is explicit", async ({
   page,
 }) => {

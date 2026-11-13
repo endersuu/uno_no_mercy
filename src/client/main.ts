@@ -400,10 +400,17 @@ function updateTurnUI() {
               ? "本局结束"
               : "正在结算";
 }
+function soundLabel() {
+  return !gameAudio.enabled
+    ? "♪ 音效 关"
+    : gameAudio.ready
+      ? "♪ 音效 开"
+      : "♪ 点此启用声音";
+}
 function updateSoundButton() {
   const b = document.querySelector<HTMLButtonElement>("#toggle-sound");
   if (b) {
-    b.textContent = gameAudio.enabled ? "♪ 音效 开" : "♪ 音效 关";
+    b.textContent = soundLabel();
     b.setAttribute("aria-pressed", String(gameAudio.enabled));
     b.title = gameAudio.enabled
       ? gameAudio.ready
@@ -414,7 +421,7 @@ function updateSoundButton() {
 }
 
 function header() {
-  return `<header><a href="/" class="brand" id="brand"><span class="brand-mark">U<span>!</span></span><span>UNO<small>NO MERCY</small></span></a><div class="header-actions"><span class="connection"><i class="${online ? "" : "off"}"></i>${online ? "已连接" : "连接中"}</span><button class="ghost compact sound-toggle" id="toggle-sound" aria-label="切换游戏音效" aria-pressed="${gameAudio.enabled}">${gameAudio.enabled ? "♪ 音效 开" : "♪ 音效 关"}</button><button class="ghost compact" id="open-rules">游戏规则 ↗</button>${state ? '<button class="ghost compact" id="leave-room">离开房间</button>' : ""}</div></header>`;
+  return `<header><a href="/" class="brand" id="brand"><span class="brand-mark">U<span>!</span></span><span>UNO<small>NO MERCY</small></span></a><div class="header-actions"><span class="connection"><i class="${online ? "" : "off"}"></i>${online ? "已连接" : "连接中"}</span><button class="ghost compact sound-toggle" id="toggle-sound" aria-label="切换游戏音效" aria-pressed="${gameAudio.enabled}">${soundLabel()}</button><button class="ghost compact" id="open-rules">游戏规则 ↗</button>${state ? '<button class="ghost compact" id="leave-room">离开房间</button>' : ""}</div></header>`;
 }
 function home() {
   const room = roomFromUrl();
@@ -479,6 +486,10 @@ function render(force = false) {
     }
   });
   on("toggle-sound", "click", () => {
+    if (gameAudio.enabled && !gameAudio.ready) {
+      void gameAudio.preview().then(updateSoundButton);
+      return;
+    }
     gameAudio.setEnabled(!gameAudio.enabled);
     updateSoundButton();
     if (gameAudio.enabled) void gameAudio.preview().then(updateSoundButton);
@@ -810,6 +821,7 @@ socket.on("disconnect", () => {
 socket.on("state", receive);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && latest) applyImmediately(latest);
+  if (!document.hidden) updateSoundButton();
 });
 let viewportFrame = 0;
 let viewportWidth = window.innerWidth;
@@ -840,20 +852,33 @@ window.addEventListener("resize", queueViewportSync);
 window.visualViewport?.addEventListener("resize", queueViewportSync);
 syncViewport();
 
+function unlockSound(event: Event) {
+  // These controls own activation: a capture listener must not turn "enable"
+  // into "mute" by changing ready before their click handler runs.
+  if (
+    event.target instanceof Element &&
+    event.target.closest("#toggle-sound, #preview-sound")
+  )
+    return;
+  void gameAudio.unlock(true).then(updateSoundButton);
+}
 document.addEventListener(
   "pointerdown",
-  () => {
-    void gameAudio.unlock().then(updateSoundButton);
+  (event) => {
+    if (event.pointerType === "mouse") unlockSound(event);
   },
   { capture: true },
 );
 document.addEventListener(
-  "keydown",
-  () => {
-    void gameAudio.unlock().then(updateSoundButton);
+  "pointerup",
+  (event) => {
+    if (event.pointerType !== "mouse") unlockSound(event);
   },
   { capture: true },
 );
+// Touch activation is granted on release; click also covers accessible controls.
+for (const event of ["touchend", "click", "keydown"])
+  document.addEventListener(event, unlockSound, { capture: true });
 window.addEventListener("storage", (e) => {
   if (e.key === "uno-audio") {
     gameAudio.setEnabled(e.newValue !== "off");

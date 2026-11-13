@@ -173,10 +173,11 @@ export class GameAudio {
     return this.enabled && this.context?.state === "running";
   }
 
-  /** Call directly from a user gesture. Never require audio before sending a move. */
-  async unlock(): Promise<void> {
+  /** Gesture retries must reach resume() synchronously, even if an older call
+   * is still blocked by autoplay policy. Never wait for audio to send a move. */
+  async unlock(fromGesture = false): Promise<void> {
     if (!this.enabled || document.hidden) return;
-    if (this.unlocking) return this.unlocking;
+    if (this.unlocking && !fromGesture) return this.unlocking;
     try {
       if (!this.context || this.context.state === "closed") {
         const AudioConstructor =
@@ -230,7 +231,7 @@ export class GameAudio {
   /** A short test cue makes enabling audio immediately observable to the user. */
   async preview() {
     const generation = this.generation;
-    await this.unlock();
+    await this.unlock(true);
     if (generation === this.generation) this.play("turn");
   }
 
