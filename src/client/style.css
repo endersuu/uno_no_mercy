@@ -1323,6 +1323,8 @@ dialog h2 {
 }
 /* Recognizable UNO face: saturated print, black edge, slanted white oval. */
 .card.uno-card {
+  -webkit-appearance: none;
+  appearance: none;
   aspect-ratio: 2 / 3;
   height: auto;
   padding: 0;
@@ -1337,8 +1339,9 @@ dialog h2 {
   display: none;
 }
 .card-art {
-  position: absolute;
-  inset: 0;
+  /* Keep the face in flow: Safari can leave SVG-only card buttons blank when
+     their entire contents are absolutely positioned. */
+  position: relative;
   flex: none;
   display: block;
   width: 100%;

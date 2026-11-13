@@ -94,6 +94,39 @@ async function assertBoardFits(page: Page) {
             `card caption is clipped by hand area: ${JSON.stringify(rect.toJSON())}`,
           );
         if (node.matches(".hand .card")) {
+          const art = node.querySelector<SVGSVGElement>(".card-art");
+          if (!art) problems.push(`card ${node.dataset.card} has no SVG face`);
+          else {
+            const artRect = art.getBoundingClientRect();
+            const artStyle = getComputedStyle(art);
+            for (const [part, partStyle] of [
+              ["button", style],
+              ["SVG", artStyle],
+            ] as const) {
+              if (
+                partStyle.display === "none" ||
+                partStyle.visibility !== "visible" ||
+                Number(partStyle.opacity) <= 0 ||
+                [
+                  ...partStyle.filter.matchAll(
+                    /(?:opacity|brightness)\(([^)]+)\)/g,
+                  ),
+                ].some(([, value]) => Number.parseFloat(value) === 0)
+              )
+                problems.push(`card ${node.dataset.card} ${part} is invisible`);
+            }
+            if (
+              artRect.width <= 0 ||
+              artRect.height <= 0 ||
+              Math.abs(artRect.width - rect.width) > 1 ||
+              Math.abs(artRect.height - rect.height) > 1 ||
+              Math.abs(artRect.left - rect.left) > 1 ||
+              Math.abs(artRect.top - rect.top) > 1
+            )
+              problems.push(
+                `card ${node.dataset.card} SVG does not fill its button: ${JSON.stringify({ card: rect.toJSON(), svg: artRect.toJSON() })}`,
+              );
+          }
           if (
             rect.width < (portrait ? 44 : 53) ||
             rect.height < (portrait ? 66 : 79)
@@ -693,6 +726,53 @@ async function denseGame(
   await expect(page.locator(".game")).toBeVisible();
   await settled(page);
 }
+test("number and action card faces remain visible on either turn after phone rotation", async ({
+  page,
+}) => {
+  const hand: Card[] = [
+    ...[0, 6, 9].map((value): Card => ({
+      id: `number-${value}`,
+      kind: "number",
+      color: "red",
+      value,
+    })),
+    { id: "action-discard", kind: "discardAll", color: "red" },
+    { id: "action-reverse", kind: "reverse", color: "green" },
+    { id: "action-wild", kind: "wild4", color: null },
+    { id: "action-draw", kind: "draw2", color: "green" },
+  ];
+  const expectedIds = hand.map((card) => card.id).sort();
+  for (const turn of [0, 1]) {
+    const view = denseSnapshot(hand.length);
+    Object.assign(view, {
+      hand,
+      turn,
+      event: null,
+      top: { id: "top-zero", kind: "number", color: "blue", value: 0 },
+      color: "blue",
+      playable: turn === 0 ? ["number-0", "action-wild"] : [],
+      penalty: 0,
+      lastPenalty: 0,
+      challenge: false,
+      canCatch: false,
+    });
+    await page.setViewportSize({ width: 390, height: 720 });
+    await denseGame(page, view);
+    await expect(page.locator(".hand .card")).toHaveCount(7);
+    await expect(page.locator(".hand .card:enabled")).toHaveCount(
+      turn === 0 ? 2 : 0,
+    );
+    expect([...(await visitEveryCard(page))].sort()).toEqual(expectedIds);
+
+    await page.setViewportSize({ width: 720, height: 390 });
+    expect([...(await visitEveryCard(page))].sort()).toEqual(expectedIds);
+
+    await page.setViewportSize({ width: 390, height: 720 });
+    await expect(page.locator(".hand .card")).toHaveCount(7);
+    expect([...(await visitEveryCard(page))].sort()).toEqual(expectedIds);
+    await page.screenshot({ path: `/tmp/uno-card-faces-turn-${turn}.png` });
+  }
+});
 for (const viewport of screens) {
   test(`24-card hand stays readable and fully reachable at ${viewport.width}x${viewport.height}`, async ({
     page,
