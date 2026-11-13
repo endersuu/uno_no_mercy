@@ -42,6 +42,7 @@ export interface PlayerView {
   rematch: boolean;
 }
 export interface View {
+  roundId: string | null;
   event: GameEvent | null;
   room: string;
   revision: number;

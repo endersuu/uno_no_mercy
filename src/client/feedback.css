@@ -1,0 +1,142 @@
+.flying-card {
+  position: fixed;
+  z-index: 90 !important;
+  pointer-events: none !important;
+  opacity: 1 !important;
+  filter: none !important;
+  will-change: transform;
+}
+.game-effect {
+  position: fixed;
+  z-index: 95;
+  left: 50%;
+  top: 19%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 23px;
+  max-width: calc(100vw - 28px);
+  width: max-content;
+  background: #142c26f5;
+  border: 2px solid #dbf67b;
+  border-radius: 16px;
+  box-shadow: 0 16px 45px #071b2738;
+  color: #f7ffe1;
+  pointer-events: none;
+}
+.game-effect strong {
+  display: block;
+  font-size: 21px;
+  line-height: 1.4;
+}
+.game-effect small {
+  display: block;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #d0dfbd;
+  margin-top: 5px;
+  max-width: 340px;
+}
+.effect-mark {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  font-size: 35px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #d9f579;
+  color: #17392a;
+  font-weight: 900;
+}
+.game-effect[data-effect="play"] {
+  top: 14%;
+  padding: 11px 17px;
+  border-color: #c4d6bb;
+}
+.game-effect[data-effect="play"] strong {
+  font-size: 15px;
+}
+.game-effect[data-effect="play"] .effect-mark {
+  width: 32px;
+  height: 32px;
+  font-size: 22px;
+}
+.game-effect[data-effect="skip"] {
+  border-color: #f3a66f;
+}
+.game-effect[data-effect="skip"] .effect-mark {
+  background: #f3a66f;
+}
+.game-effect[data-effect="swap"] {
+  border-color: #8ed3ff;
+}
+.game-effect[data-effect="swap"] .effect-mark {
+  background: #8ed3ff;
+}
+.game[data-opening="true"] .discard > .card {
+  visibility: hidden;
+}
+.opening-card {
+  perspective: 800px;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.flip-card-inner {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+}
+.flip-front,
+.flip-back {
+  position: absolute !important;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.flip-front {
+  transform: rotateY(180deg);
+}
+.flip-front > .card {
+  width: 100% !important;
+  height: 100% !important;
+}
+.flip-back {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+@media (max-width: 650px) {
+  .game-effect {
+    top: 16%;
+    padding: 15px;
+    gap: 11px;
+  }
+  .game-effect strong {
+    font-size: 18px;
+  }
+  .game-effect small {
+    font-size: 11px;
+  }
+  .effect-mark {
+    width: 39px;
+    height: 39px;
+    font-size: 28px;
+  }
+  .game-effect[data-effect="play"] {
+    top: 12%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .game-effect {
+    transition: none;
+  }
+  .opening-card {
+    display: none;
+  }
+}

@@ -165,6 +165,7 @@ export class Rooms {
         r.pausedBy === null &&
         r.seats.every((s) => s?.socket);
     return {
+      roundId: g?.roundId ?? null,
       event: g?.event ?? null,
       room: r.id,
       revision: r.revision,

@@ -17,6 +17,7 @@ test("two humans: invite, privacy, rules pause, reconnect, complete round, remat
   await a.locator("#name").fill("Alice");
   await a.getByRole("button", { name: "创建房间" }).click();
   await expect(a.locator(".waiting")).toBeVisible();
+  await expect(a).toHaveURL(/room=/);
   const url = a.url();
   await a.screenshot({ path: "/tmp/uno-waiting.png", fullPage: true });
   await b.goto(url);

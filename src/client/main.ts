@@ -11,10 +11,12 @@ import { rules, cardGuide } from "./rules";
 import { gameAudio } from "./audio";
 import { cardMarkup } from "./cards";
 import "./style.css";
+import "./feedback.css";
 import {
   cancelMotion,
   describeEvent,
   settle,
+  opening,
   transition,
   type Feedback,
 } from "./motion";
@@ -33,7 +35,9 @@ let state: View | null = null,
   uno = false;
 let pending: Card | null = null;
 let presenting = false;
-let queue: View[] = [];
+let queue: { view: View; opening: boolean }[] = [];
+let roundOpening = false;
+let restoringSeat = false;
 let latest: View | null = null;
 let generation = 0;
 let motionAbort = new AbortController();
@@ -84,6 +88,8 @@ function applyImmediately(v: View | null) {
   motionAbort.abort();
   motionAbort = new AbortController();
   cancelMotion();
+  gameAudio.cancelPending();
+  roundOpening = false;
   queue = [];
   presenting = false;
   freshCards.clear();
@@ -101,16 +107,35 @@ async function presentQueue() {
   syncControls();
   try {
     while (queue.length && run === generation) {
-      const next = queue.shift()!;
+      const item = queue.shift()!;
+      const next = item.view;
       const previous = state;
       const isEvent =
         !!next.event &&
         previous?.phase === "playing" &&
         next.event.id !== previous.event?.id;
+      if (item.opening) {
+        roundOpening = true;
+        state = next;
+        feedback = {
+          title: "新一局 · 正在翻开首张牌",
+          detail: "首张牌只决定起始颜色，0 / 7 不触发换手。",
+          tone: "normal",
+        };
+        render(true);
+        gameAudio.play("deal");
+        await opening(next, motionAbort.signal, {
+          reveal: () => gameAudio.opening(),
+        });
+        if (run !== generation) return;
+        roundOpening = false;
+      }
       if (isEvent) {
         announce(describeEvent(next));
         gameAudio.event(next);
-        await transition(previous!, next, motionAbort.signal);
+        await transition(previous!, next, motionAbort.signal, {
+          effect: () => gameAudio.effect(next),
+        });
         if (run !== generation) return;
       }
       freshCards = new Set(
@@ -145,12 +170,19 @@ async function presentQueue() {
 }
 function receive(v: View) {
   latest = v;
+  const freshOpening =
+    v.phase === "playing" &&
+    !v.event &&
+    !restoringSeat &&
+    v.pausedBy === null &&
+    !v.disconnected &&
+    !document.hidden &&
+    (!state || state.roundId !== v.roundId || state.phase === "waiting");
+  restoringSeat = false;
   if (v.phase !== "playing" || v.pausedBy !== null || v.disconnected)
     dialog("colors").close();
   if (
-    resync ||
-    !state ||
-    v.room !== state.room ||
+    ((resync || !state || v.room !== state.room) && !freshOpening) ||
     v.phase === "waiting" ||
     v.pausedBy !== null ||
     v.disconnected ||
@@ -161,7 +193,8 @@ function receive(v: View) {
     applyImmediately(v);
     return;
   }
-  queue.push(v);
+  resync = false;
+  queue.push({ view: v, opening: freshOpening });
   if (queue.length > 4) {
     applyImmediately(v);
     return;
@@ -259,7 +292,11 @@ function turnInfo(v: View) {
   if (busy || presenting)
     return {
       mode: "resolving",
-      title: busy ? "正在确认操作…" : "正在结算这一手…",
+      title: roundOpening
+        ? "正在翻开第一张牌…"
+        : busy
+          ? "正在确认操作…"
+          : "正在结算这一手…",
       hint: "请稍候，结算完成后会亮起可用操作。",
       icon: "⋯",
     };
@@ -312,6 +349,11 @@ function updateSoundButton() {
   if (b) {
     b.textContent = gameAudio.enabled ? "♪ 音效 开" : "♪ 音效 关";
     b.setAttribute("aria-pressed", String(gameAudio.enabled));
+    b.title = gameAudio.enabled
+      ? gameAudio.ready
+        ? "音效已就绪；点击静音"
+        : "点击页面启用声音；也可在游戏规则中试听"
+      : "点击开启音效";
   }
 }
 
@@ -332,7 +374,7 @@ function table(v: View) {
     paused = v.pausedBy !== null || v.disconnected || !online,
     ended = v.phase === "finished",
     canAct = !paused && !ended && !busy && !presenting;
-  return `<main class="game" data-turn="${turnInfo(v).mode}"><div class="game-heading"><div><span class="eyebrow">THE FRIENDLY SHOWDOWN</span><h2>这一局，不留情。</h2></div><button class="ghost" id="pause" ${ended ? "disabled" : ""}>Ⅱ 暂停 / 看规则</button></div><section class="turn-banner" role="status" aria-live="polite"><span class="turn-icon">${turnInfo(v).icon}</span><div><b>${esc(turnInfo(v).title)}</b><p>${esc(turnInfo(v).hint)}</p></div></section><section class="table"><div class="opponent"><span class="avatar">${esc(other.name[0] ?? "?")}</span><div><b>${esc(other.name)}</b><span>${other.connected ? "在线" : "离线"} · ${other.count} 张手牌</span></div><div class="back-cards" aria-hidden="true">${Array.from({ length: Math.min(other.count, 7) }, () => "<i>U!</i>").join("")}</div><span class="turn-pill ${!myTurn && !ended ? "current" : ""}">${!myTurn && !ended ? "TA 的回合" : "对手"}</span></div><div class="table-center"><div class="draw-pile" aria-hidden="true"><span>UNO</span><small>NO MERCY</small></div><div class="discard">${v.top ? card(v.top) : ""}</div><div class="table-info"><span class="eyebrow">CURRENT COLOR</span><b class="color-indicator ${v.color}">${v.color ? colorNames[v.color] : ""}</b><span>${v.penalty ? `累计罚抽 <strong>+${v.penalty}</strong>` : "匹配颜色、数字或图案"}</span></div></div><div class="action-receipt" data-tone="${feedback?.tone ?? "normal"}"><span>刚刚发生</span><b>${esc(feedback?.title ?? "手牌已发好")}</b><p>${esc(feedback?.detail ?? "每人 7 张，准备开始。")}</p></div><div class="table-status ${myTurn && !paused && !ended ? "your-turn" : ""}" aria-live="polite">${ended ? "本局结束" : paused ? "Ⅱ 对局已暂停" : presenting ? "正在展示本次操作…" : myTurn ? "轮到你了，出一张好牌。" : "等待对手出牌…"}</div></section>${paused && !ended ? `<section class="pause-banner"><div><b>${!online ? "网络已断开，正在尝试重连" : v.disconnected ? "对手断线，对局已暂停" : "规则时间，慢慢看。"}</b><p>${v.disconnected ? `<span id="countdown"></span> · 原标签页可重连` : v.pausedBy === v.me ? "你发起了暂停，准备好后继续。" : "对手正在查看规则，请等待对方继续。"}</p></div>${v.pausedBy === v.me ? `<button class="primary" id="resume" ${!online || busy ? "disabled" : ""}>继续游戏 →</button>` : ""}</section>` : ""}${ended ? `<section class="result"><div><span class="eyebrow">THAT’S A WRAP</span><h2>${v.winner === v.me ? "这局，你赢了！" : "这局，让 TA 赢了。"}</h2><p>${esc(v.reason)}</p></div><div>${v.closed ? '<button class="primary" id="back-home">回到首页 →</button>' : `<button class="primary" id="rematch" ${me.rematch || busy || !online ? "disabled" : ""}>${me.rematch ? "已准备，等待对手…" : "再来一局 ↗"}</button><p class="small-note">${other.rematch ? "对方已准备好" : "双方同意后重新发牌"}</p>`}</div></section>` : ""}<section class="hand-section"><div class="hand-heading"><div><h3>你的手牌 <span>${me.count}</span><strong class="hand-turn-tag"></strong></h3><p>${!canAct ? "" : myTurn ? (v.roulette ? "选择轮盘颜色，然后抽到该颜色为止。" : v.penalty ? `叠加 +${v.lastPenalty} 或更大的罚抽牌，或接受罚抽。` : "亮起的牌可以打出。") : "想好下一张，轮到你就出。"}</p></div><div class="hand-actions">${canAct && v.canCatch ? '<button class="danger" id="catch">抓漏喊 UNO</button>' : ""}<button class="uno-button" id="uno" ${!canAct || me.count !== 1 ? "disabled" : ""}>UNO!</button></div></div><div class="hand">${v.hand.map((c) => card(c, true, canAct && v.playable.includes(c.id))).join("")}</div><div class="play-controls"><label class="check-label"><input id="auto-uno" type="checkbox" ${uno ? "checked" : ""}> 出牌时喊 UNO</label><div class="button-row">${myTurn && v.challenge ? `<button class="ghost" id="challenge" ${!canAct ? "disabled" : ""}>质疑 +4</button>` : ""}${myTurn && v.roulette ? `<button class="primary" id="roulette" ${!canAct ? "disabled" : ""}>选择轮盘颜色 →</button>` : `<button class="primary" id="draw" ${!canAct || !myTurn || (!v.penalty && v.playable.length > 0) ? "disabled" : ""}>${v.penalty ? `接受 +${v.penalty} 张` : "抽到可出的牌"} ↓</button>`}</div></div></section><details class="activity"><summary>本局动态 <span>${esc(v.log.at(-1) ?? "")}</span></summary><ol>${v.log
+  return `<main class="game" data-opening="${roundOpening}" data-turn="${turnInfo(v).mode}"><div class="game-heading"><div><span class="eyebrow">THE FRIENDLY SHOWDOWN</span><h2>这一局，不留情。</h2></div><button class="ghost" id="pause" ${ended ? "disabled" : ""}>Ⅱ 暂停 / 看规则</button></div><section class="turn-banner" role="status" aria-live="polite"><span class="turn-icon">${turnInfo(v).icon}</span><div><b>${esc(turnInfo(v).title)}</b><p>${esc(turnInfo(v).hint)}</p></div></section><section class="table"><div class="opponent"><span class="avatar">${esc(other.name[0] ?? "?")}</span><div><b>${esc(other.name)}</b><span>${other.connected ? "在线" : "离线"} · ${other.count} 张手牌</span></div><div class="back-cards" aria-hidden="true">${Array.from({ length: Math.min(other.count, 7) }, () => "<i>U!</i>").join("")}</div><span class="turn-pill ${!myTurn && !ended ? "current" : ""}">${!myTurn && !ended ? "TA 的回合" : "对手"}</span></div><div class="table-center"><div class="draw-pile" aria-hidden="true"><span>UNO</span><small>NO MERCY</small></div><div class="discard">${v.top ? card(v.top) : ""}</div><div class="table-info"><span class="eyebrow">CURRENT COLOR</span><b class="color-indicator ${v.color}">${v.color ? colorNames[v.color] : ""}</b><span>${v.penalty ? `累计罚抽 <strong>+${v.penalty}</strong>` : "匹配颜色、数字或图案"}</span></div></div><div class="action-receipt" data-tone="${feedback?.tone ?? "normal"}"><span>刚刚发生</span><b>${esc(feedback?.title ?? "手牌已发好")}</b><p>${esc(feedback?.detail ?? "每人 7 张，准备开始。")}</p></div><div class="table-status ${myTurn && !paused && !ended ? "your-turn" : ""}" aria-live="polite">${ended ? "本局结束" : paused ? "Ⅱ 对局已暂停" : presenting ? "正在展示本次操作…" : myTurn ? "轮到你了，出一张好牌。" : "等待对手出牌…"}</div></section>${paused && !ended ? `<section class="pause-banner"><div><b>${!online ? "网络已断开，正在尝试重连" : v.disconnected ? "对手断线，对局已暂停" : "规则时间，慢慢看。"}</b><p>${v.disconnected ? `<span id="countdown"></span> · 原标签页可重连` : v.pausedBy === v.me ? "你发起了暂停，准备好后继续。" : "对手正在查看规则，请等待对方继续。"}</p></div>${v.pausedBy === v.me ? `<button class="primary" id="resume" ${!online || busy ? "disabled" : ""}>继续游戏 →</button>` : ""}</section>` : ""}${ended ? `<section class="result"><div><span class="eyebrow">THAT’S A WRAP</span><h2>${v.winner === v.me ? "这局，你赢了！" : "这局，让 TA 赢了。"}</h2><p>${esc(v.reason)}</p></div><div>${v.closed ? '<button class="primary" id="back-home">回到首页 →</button>' : `<button class="primary" id="rematch" ${me.rematch || busy || !online ? "disabled" : ""}>${me.rematch ? "已准备，等待对手…" : "再来一局 ↗"}</button><p class="small-note">${other.rematch ? "对方已准备好" : "双方同意后重新发牌"}</p>`}</div></section>` : ""}<section class="hand-section"><div class="hand-heading"><div><h3>你的手牌 <span>${me.count}</span><strong class="hand-turn-tag"></strong></h3><p>${!canAct ? "" : myTurn ? (v.roulette ? "选择轮盘颜色，然后抽到该颜色为止。" : v.penalty ? `叠加 +${v.lastPenalty} 或更大的罚抽牌，或接受罚抽。` : "亮起的牌可以打出。") : "想好下一张，轮到你就出。"}</p></div><div class="hand-actions">${canAct && v.canCatch ? '<button class="danger" id="catch">抓漏喊 UNO</button>' : ""}<button class="uno-button" id="uno" ${!canAct || me.count !== 1 ? "disabled" : ""}>UNO!</button></div></div><div class="hand">${v.hand.map((c) => card(c, true, canAct && v.playable.includes(c.id))).join("")}</div><div class="play-controls"><label class="check-label"><input id="auto-uno" type="checkbox" ${uno ? "checked" : ""}> 出牌时喊 UNO</label><div class="button-row">${myTurn && v.challenge ? `<button class="ghost" id="challenge" ${!canAct ? "disabled" : ""}>质疑 +4</button>` : ""}${myTurn && v.roulette ? `<button class="primary" id="roulette" ${!canAct ? "disabled" : ""}>选择轮盘颜色 →</button>` : `<button class="primary" id="draw" ${!canAct || !myTurn || (!v.penalty && v.playable.length > 0) ? "disabled" : ""}>${v.penalty ? `接受 +${v.penalty} 张` : "抽到可出的牌"} ↓</button>`}</div></div></section><details class="activity"><summary>本局动态 <span>${esc(v.log.at(-1) ?? "")}</span></summary><ol>${v.log
     .slice()
     .reverse()
     .map((l) => `<li>${esc(l)}</li>`)
@@ -379,6 +421,7 @@ function render(force = false) {
   on("toggle-sound", "click", () => {
     gameAudio.setEnabled(!gameAudio.enabled);
     updateSoundButton();
+    if (gameAudio.enabled) void gameAudio.preview().then(updateSoundButton);
   });
   on("open-rules", "click", () => openRules());
   on("pause", "click", () => openRules());
@@ -450,6 +493,7 @@ async function enter(
   if (joining) return;
   joining = true;
   const token = room ? get(`uno-token-${room}`) : null;
+  restoringSeat = !!token;
   const r = await command({
     type,
     name,
@@ -539,6 +583,16 @@ for (const name of ruleTabs) {
     );
   });
 }
+on("preview-sound", "click", async () => {
+  gameAudio.setEnabled(true);
+  await gameAudio.preview();
+  updateSoundButton();
+  toast(
+    gameAudio.ready
+      ? "已播放试听音效"
+      : "浏览器暂未启用声音，请检查标签页静音或系统音量。",
+  );
+});
 on("close-rules", "click", () => dialog("rules").close());
 on("rules-done", "click", () => dialog("rules").close());
 on("cancel-color", "click", () => dialog("colors").close());
@@ -583,14 +637,14 @@ window.addEventListener("resize", () => {
 document.addEventListener(
   "pointerdown",
   () => {
-    void gameAudio.unlock();
+    void gameAudio.unlock().then(updateSoundButton);
   },
   { capture: true },
 );
 document.addEventListener(
   "keydown",
   () => {
-    void gameAudio.unlock();
+    void gameAudio.unlock().then(updateSoundButton);
   },
   { capture: true },
 );

@@ -9,6 +9,7 @@ import {
   type GameEvent,
 } from "../shared/types.js";
 export interface Game {
+  roundId: string;
   event: GameEvent | null;
   hands: Card[][];
   deck: Card[];
@@ -74,6 +75,7 @@ export function newGame(turn = 0): Game {
     discard.push(pile.pop()!);
   } while (discard.at(-1)!.kind !== "number");
   return {
+    roundId: randomUUID(),
     event: null,
     hands,
     deck: pile,

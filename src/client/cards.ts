@@ -16,9 +16,9 @@ function symbol(c: Card): string {
   if (c.kind === "discardAll")
     return `<g fill="${ink}" stroke="#161616" stroke-width="1.2"><rect x="25" y="48" width="25" height="39" rx="3" transform="rotate(-12 38 67)"/><rect x="43" y="52" width="25" height="39" rx="3" transform="rotate(10 55 71)"/><path d="M41 91h8V79h10v12h8l-13 15z"/></g>`;
   if (!c.color) {
-    return `<g transform="rotate(18 50 75)" stroke="white" stroke-width="2"><rect x="18" y="60" width="20" height="32" rx="3" fill="#ed1c24"/><rect x="32" y="52" width="20" height="32" rx="3" fill="#0075be"/><rect x="47" y="60" width="20" height="32" rx="3" fill="#009b49"/><rect x="62" y="52" width="20" height="32" rx="3" fill="#f8cf00"/></g><text x="50" y="115" class="wild-value" text-anchor="middle" fill="white" stroke="#111" stroke-width="3" paint-order="stroke">${face(c)}</text>`;
+    return `<g transform="rotate(18 50 75)" stroke="white" stroke-width="2"><rect x="18" y="60" width="20" height="32" rx="3" fill="#ed1c24"/><rect x="32" y="52" width="20" height="32" rx="3" fill="#0075be"/><rect x="47" y="60" width="20" height="32" rx="3" fill="#009b49"/><rect x="62" y="52" width="20" height="32" rx="3" fill="#f8cf00"/></g><text x="50" y="115" class="wild-value" text-anchor="middle" textLength="${c.kind === "wild10" ? 57 : 42}" lengthAdjust="spacingAndGlyphs" fill="white" stroke="#111" stroke-width="3" paint-order="stroke">${face(c)}</text>`;
   }
-  return `<text x="50" y="98" text-anchor="middle" fill="${ink}" stroke="#111" stroke-width="2" paint-order="stroke" class="uno-value">${face(c)}</text>${c.kind === "number" && (c.value === 6 || c.value === 9) ? `<path d="M37 105h26" stroke="${ink}" stroke-width="3"/>` : ""}`;
+  return `<text x="50" y="98" text-anchor="middle" fill="${ink}" stroke="#111" stroke-width="2" paint-order="stroke" class="uno-value"${c.kind === "number" ? "" : ' textLength="68" lengthAdjust="spacingAndGlyphs"'}>${face(c)}</text>${c.kind === "number" && (c.value === 6 || c.value === 9) ? `<path d="M37 105h26" stroke="${ink}" stroke-width="3"/>` : ""}`;
 }
 /** Original vector reconstruction of the familiar UNO card layout. */
 export function cardMarkup(
@@ -29,6 +29,10 @@ export function cardMarkup(
 ) {
   const label = `${c.color ? colorNames[c.color] : "万能"} ${c.kind === "number" ? c.value : kindNames[c.kind]}`;
   const back = c.color ? inks[c.color] : "#151515";
+  const cornerFit =
+    face(c).length > 2
+      ? ' textLength="32" lengthAdjust="spacingAndGlyphs"'
+      : "";
   const corners =
     c.kind === "number" ||
     ["draw2", "draw4", "wild4", "wild6", "wild10"].includes(c.kind)
@@ -40,5 +44,5 @@ export function cardMarkup(
           : c.kind === "roulette"
             ? "◉"
             : "⊘";
-  return `<${button ? "button" : "div"} class="card uno-card ${c.color ?? "wild"} ${button && !enabled ? "unplayable" : ""}" ${button ? `data-card="${c.id}" ${enabled ? "" : "disabled"}` : ""} aria-label="${label}" title="${label}"><svg class="card-art" viewBox="0 0 100 150" aria-hidden="true"><rect x="1" y="1" width="98" height="148" rx="12" fill="#111"/><rect x="5" y="5" width="90" height="140" rx="9" fill="white"/><rect x="8" y="8" width="84" height="134" rx="7" fill="${back}"/><ellipse cx="50" cy="75" rx="31" ry="57" transform="rotate(28 50 75)" fill="${c.color ? "white" : "#242424"}" stroke="white" stroke-width="2"/>${symbol(c)}<g fill="white" stroke="#111" stroke-width=".6" paint-order="stroke" class="uno-corner"><text x="12" y="29">${corners}</text><text x="12" y="29" transform="rotate(180 50 75)">${corners}</text></g></svg>${c.kind !== "number" ? `<span class="uno-action-label">${kindNames[c.kind]}</span>` : ""}${button && fresh ? '<span class="new-card-tag">新牌</span>' : ""}</${button ? "button" : "div"}>`;
+  return `<${button ? "button" : "div"} class="card uno-card ${c.color ?? "wild"} ${button && !enabled ? "unplayable" : ""}" ${button ? `data-card="${c.id}" ${enabled ? "" : "disabled"}` : ""} aria-label="${label}" title="${label}"><svg class="card-art" viewBox="0 0 100 150" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><rect x="1" y="1" width="98" height="148" rx="12" fill="#111"/><rect x="5" y="5" width="90" height="140" rx="9" fill="white"/><rect x="8" y="8" width="84" height="134" rx="7" fill="${back}"/><ellipse cx="50" cy="75" rx="31" ry="57" transform="rotate(28 50 75)" fill="${c.color ? "white" : "#242424"}" stroke="white" stroke-width="2"/>${symbol(c)}<g fill="white" stroke="#111" stroke-width=".6" paint-order="stroke" class="uno-corner"><text x="12" y="29"${cornerFit}>${corners}</text><text x="12" y="29" transform="rotate(180 50 75)"${cornerFit}>${corners}</text></g></svg>${c.kind !== "number" ? `<span class="uno-action-label">${kindNames[c.kind]}</span>` : ""}${button && fresh ? '<span class="new-card-tag">新牌</span>' : ""}</${button ? "button" : "div"}>`;
 }

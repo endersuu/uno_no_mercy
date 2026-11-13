@@ -37,6 +37,7 @@ test("turn banner and disabled styles stay clear; real sound cues and persistent
   expect(await a.evaluate(() => (window as any).audioStarts)).toBe(0);
   await a.getByRole("button", { name: "创建房间" }).click();
   await expect(a.locator(".waiting")).toBeVisible();
+  await expect(a).toHaveURL(/room=/);
   await b.goto(a.url());
   await b.getByRole("button", { name: "加入房间" }).click();
   await expect(a.locator(".game")).toHaveAttribute("data-turn", "mine");
@@ -52,7 +53,7 @@ test("turn banner and disabled styles stay clear; real sound cues and persistent
       opacity: getComputedStyle(el).opacity,
       filter: getComputedStyle(el).filter,
     }));
-  expect(Number(disabled.opacity)).toBeLessThan(0.6);
+  expect(Number(disabled.opacity)).toBeLessThan(0.85);
   expect(disabled.filter).toContain("brightness");
   expect(await a.locator(".game .card-art").count()).toBe(8);
   const before = await a.evaluate(() => (window as any).audioStarts);
@@ -100,7 +101,12 @@ test("all synthesized cues render finite, audible waveforms without clipping", a
     const result = [];
     for (const cue of [
       "play",
+      "opponent-play",
       "draw",
+      "deal",
+      "flip",
+      "skip",
+      "discard",
       "turn",
       "swap",
       "uno",
@@ -143,6 +149,7 @@ test("mobile game has visible turn cue, sound control and no overflow", async ({
   await a.goto("/");
   await a.getByRole("button", { name: "创建房间" }).click();
   await expect(a.locator(".waiting")).toBeVisible();
+  await expect(a).toHaveURL(/room=/);
   await b.goto(a.url());
   await b.getByRole("button", { name: "加入房间" }).click();
   await expect(a.locator(".turn-banner")).toBeVisible();

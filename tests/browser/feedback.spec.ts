@@ -7,10 +7,13 @@ async function pair(browser: Browser) {
   await a.goto("/");
   await a.getByRole("button", { name: "创建房间" }).click();
   await expect(a.locator(".waiting")).toBeVisible();
+  await expect(a).toHaveURL(/room=/);
   await b.goto(a.url());
   await b.getByRole("button", { name: "加入房间" }).click();
   await expect(a.locator(".hand .card")).toHaveCount(7);
   await expect(b.locator(".hand .card")).toHaveCount(7);
+  await expect(a.locator("#app")).toHaveAttribute("data-animating", "false");
+  await expect(b.locator("#app")).toHaveAttribute("data-animating", "false");
   return { a, b, ca, cb };
 }
 async function makePlayable(p: Page) {

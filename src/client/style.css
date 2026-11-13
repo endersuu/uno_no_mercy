@@ -681,9 +681,11 @@ footer small {
 .hand {
   display: flex;
   flex-wrap: wrap;
-  gap: 9px;
-  padding: 9px 3px 20px;
+  column-gap: 12px;
+  row-gap: 28px;
+  padding: 16px 8px 30px;
   min-height: 160px;
+  align-items: flex-start;
 }
 .hand .card {
   width: 82px;
@@ -1321,6 +1323,8 @@ dialog h2 {
 }
 /* Recognizable UNO face: saturated print, black edge, slanted white oval. */
 .card.uno-card {
+  aspect-ratio: 2 / 3;
+  height: auto;
   padding: 0;
   border: 0;
   background: transparent !important;
@@ -1333,6 +1337,9 @@ dialog h2 {
   display: none;
 }
 .card-art {
+  position: absolute;
+  inset: 0;
+  flex: none;
   display: block;
   width: 100%;
   height: 100%;
@@ -1370,20 +1377,28 @@ dialog h2 {
 }
 .uno-action-label {
   position: absolute;
-  bottom: 20%;
-  left: 10%;
-  right: 10%;
+  bottom: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% + 10px);
+  padding: 1px 4px;
+  border-radius: 4px;
+  white-space: nowrap;
   text-align: center;
-  color: #111;
-  font-size: 8px;
+  color: #29422f;
+  background: #f7f8ef;
+  font-size: 9px;
   font-weight: 800;
   pointer-events: none;
-  line-height: 1.1;
+  line-height: 1.35;
 }
 .uno-card.wild .uno-action-label {
-  bottom: 12%;
   color: #fff;
-  font-size: 7px;
+  background: #253b31;
+}
+.hero-cards .uno-action-label,
+.flying-card .uno-action-label {
+  display: none;
 }
 .uno-card .new-card-tag {
   right: 1px;
@@ -1529,9 +1544,10 @@ dialog h2 {
     border-color 0.2s;
 }
 .hand-heading {
-  position: sticky;
-  top: 0;
-  z-index: 20;
+  position: relative;
+  z-index: 1;
+  flex-wrap: wrap;
+  gap: 8px 14px;
   background: #f2f4ec;
   padding: 10px 0 4px;
   min-height: 78px;
@@ -1561,8 +1577,8 @@ dialog h2 {
   color: #385372;
 }
 .hand .card.uno-card:disabled {
-  opacity: 0.45;
-  filter: brightness(0.68) saturate(0.45);
+  opacity: 0.72;
+  filter: brightness(0.85) saturate(0.65);
   box-shadow: none;
   cursor: not-allowed;
   transform: none;
@@ -1682,22 +1698,20 @@ dialog h2 {
   }
   .hand .card.uno-card {
     width: 65px;
-    height: 98px;
+    height: auto;
   }
   .hand .card.uno-card:enabled {
     outline-width: 2px;
     outline-offset: 1px;
   }
   .hand {
-    gap: 9px;
-    padding-top: 14px;
+    column-gap: 10px;
+    row-gap: 27px;
+    padding-top: 16px;
   }
   .uno-action-label {
-    font-size: 6px;
-  }
-  .uno-card.wild .uno-action-label {
-    font-size: 6px;
-    bottom: 10%;
+    bottom: -15px;
+    font-size: 8px;
   }
   .draw-pile span {
     font-size: 25px;
@@ -1807,9 +1821,10 @@ dialog h2 {
   .card-guide-entry .card {
     width: 58px;
     height: 87px;
+    margin-bottom: 14px;
   }
   .card-guide-entry .uno-action-label {
-    font-size: 6px;
+    font-size: 8px;
   }
   #rules-content .card-guide-entry h3 {
     font-size: 13px;

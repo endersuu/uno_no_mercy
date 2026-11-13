@@ -35,9 +35,11 @@ export function describeEvent(v: View): Feedback {
     else detail = `当前颜色：${v.color ? colorNames[v.color] : ""}。`;
   } else if (e.action === "challenge") {
     title = `${actor}质疑${e.challengeWon ? "成功" : "失败"}`;
+    const penalized = e.challengeWon ? 1 - e.actor : e.actor;
+    const who = penalized === v.me ? "你" : v.players[penalized].name;
     detail = e.challengeWon
-      ? "出 +4 的玩家罚抽 4 张；质疑者继续回合。"
-      : "质疑者接受累计罚抽，并额外抽 2 张，跳过回合。";
+      ? `${who}罚抽 ${e.drawn[penalized]} 张；${v.penalty ? `质疑者继续处理此前的 +${v.penalty}。` : "质疑者继续出牌。"}`
+      : `${who}罚抽 ${e.drawn[penalized]} 张，已包含额外 2 张，跳过回合。`;
     tone = e.challengeWon ? "success" : "attack";
   } else if (e.action === "uno") {
     title = `${actor}喊了 UNO！`;
@@ -68,202 +70,439 @@ export function describeEvent(v: View): Feedback {
   return { title, detail, tone };
 }
 const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
-function rect(selector: string) {
-  return document.querySelector(selector)?.getBoundingClientRect();
-}
-function seat(p: number, v: View) {
-  return p === v.me ? rect(".hand") : rect(".opponent .avatar");
-}
-const active = new Set<Animation>();
-const ghosts = new Set<HTMLElement>();
-export function cancelMotion() {
-  for (const a of active) a.cancel();
-  active.clear();
-  for (const el of ghosts) el.remove();
-  ghosts.clear();
-  document
-    .querySelectorAll(".departing")
-    .forEach((el) => el.classList.remove("departing"));
-}
-async function animate(
-  el: HTMLElement,
-  frames: Keyframe[],
-  duration: number,
-  delay = 0,
-) {
-  const animation = el.animate(frames, {
-    duration,
-    delay,
-    easing: "cubic-bezier(.2,.75,.25,1)",
-    fill: "both",
-  });
-  active.add(animation);
-  try {
-    await animation.finished;
-  } catch {
-  } finally {
-    animation.cancel();
-    active.delete(animation);
+const runs = new Set<MotionRun>();
+/** Every presentation owns its nodes, animations and timers, including cancellation. */
+class MotionRun {
+  aborted = false;
+  nodes = new Set<HTMLElement>();
+  animations = new Set<Animation>();
+  hidden = new Set<HTMLElement>();
+  pending = new Set<() => void>();
+  constructor(private signal?: AbortSignal) {
+    runs.add(this);
+    signal?.addEventListener("abort", this.cancel, { once: true });
+    if (signal?.aborted) this.cancel();
   }
+  cancel = () => {
+    this.aborted = true;
+    this.finish();
+  };
+  finish() {
+    for (const resolve of this.pending) resolve();
+    this.pending.clear();
+    for (const a of this.animations) a.cancel();
+    this.animations.clear();
+    for (const node of this.nodes) node.remove();
+    this.nodes.clear();
+    for (const node of this.hidden) node.classList.remove("departing");
+    this.hidden.clear();
+    this.signal?.removeEventListener("abort", this.cancel);
+    runs.delete(this);
+  }
+  add(node: HTMLElement) {
+    if (this.aborted) return node;
+    this.nodes.add(node);
+    document.body.append(node);
+    return node;
+  }
+  hide(node: HTMLElement | undefined | null) {
+    if (node && !reduced()) {
+      this.hidden.add(node);
+      node.classList.add("departing");
+    }
+  }
+  wait(ms: number): Promise<void> {
+    if (this.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout>;
+      const done = () => {
+        clearTimeout(timer);
+        this.pending.delete(done);
+        resolve();
+      };
+      this.pending.add(done);
+      timer = setTimeout(done, ms);
+    });
+  }
+  async animate(node: HTMLElement, frames: Keyframe[], ms: number, delay = 0) {
+    if (this.aborted || reduced()) return;
+    const a = node.animate(frames, {
+      duration: ms,
+      delay,
+      easing: "cubic-bezier(.2,.7,.25,1)",
+      fill: "forwards",
+    });
+    this.animations.add(a);
+    try {
+      await a.finished;
+    } catch {
+      /* cancellation is a normal state change */
+    }
+  }
+}
+export function cancelMotion() {
+  for (const run of [...runs]) run.cancel();
+}
+function raw(selector: string) {
+  return document.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+}
+/** Keep feedback visible even when the real discard pile is above a scrolled hand. */
+function anchor(
+  box: DOMRect | undefined,
+  kind: "seat" | "table" = "seat",
+): DOMRect {
+  const width = Math.max(64, Math.min(box?.width ?? 80, 94)),
+    height = width * 1.5;
+  let x = (box ? box.x + box.width / 2 : innerWidth / 2) - width / 2;
+  let y = (box ? box.y + box.height / 2 : innerHeight / 2) - height / 2;
+  if (
+    kind === "table" &&
+    (!box || box.bottom < 40 || box.top > innerHeight - 40)
+  )
+    y = innerHeight * 0.35;
+  x = Math.max(12, Math.min(innerWidth - width - 12, x));
+  y = Math.max(12, Math.min(innerHeight - height - 16, y));
+  return new DOMRect(x, y, width, height);
+}
+function seat(player: number, v: View) {
+  return anchor(raw(player === v.me ? ".hand-heading" : ".opponent .avatar"));
+}
+const backMarkup = "<b>UNO</b><small>NO MERCY</small>";
+function faceNode(card: NonNullable<View["top"]>) {
+  const holder = document.createElement("div");
+  holder.innerHTML = cardMarkup(card);
+  return holder.firstElementChild as HTMLElement;
 }
 async function fly(
-  from: DOMRect | undefined,
-  to: DOMRect | undefined,
+  run: MotionRun,
+  from: DOMRect,
+  to: DOMRect,
   source?: HTMLElement,
   delay = 0,
-  reverse = false,
+  lane = 0,
 ) {
-  if (!from || !to || reduced()) return;
-  const el = source
+  if (run.aborted || reduced()) return;
+  const node = source
     ? (source.cloneNode(true) as HTMLElement)
     : document.createElement("div");
-  el.tabIndex = -1;
-  el.removeAttribute("id");
-  el.removeAttribute("data-card");
-  el.removeAttribute("disabled");
-  el.setAttribute("aria-hidden", "true");
+  node.tabIndex = -1;
+  node.removeAttribute("id");
+  node.removeAttribute("data-card");
+  node.removeAttribute("disabled");
+  node.setAttribute("aria-hidden", "true");
+  node.classList.remove("unplayable", "departing", "pending-card");
+  node.querySelector(".new-card-tag")?.remove();
   if (!source) {
-    el.className = "motion-back";
-    el.innerHTML = "<b>UNO</b><small>NO MERCY</small>";
+    node.className = "motion-back";
+    node.innerHTML = backMarkup;
   }
-  el.classList.remove("unplayable", "departing");
-  el.classList.add("flying-card");
-  const width = Math.min(from.width, 94),
-    height = width * 1.46;
-  const start = {
-    x: from.x + (from.width - width) / 2,
-    y: from.y + (from.height - height) / 2,
-  };
-  const end = {
-    x: to.x + (to.width - width) / 2,
-    y: to.y + (to.height - height) / 2,
-  };
-  Object.assign(el.style, {
-    position: "fixed",
-    left: `${start.x}px`,
-    top: `${start.y}px`,
-    width: `${width}px`,
-    height: `${height}px`,
+  node.classList.add("flying-card");
+  Object.assign(node.style, {
+    left: `${from.x}px`,
+    top: `${from.y}px`,
+    width: `${from.width}px`,
+    height: `${from.height}px`,
     margin: "0",
   });
-  document.body.append(el);
-  ghosts.add(el);
-  await animate(
-    el,
+  run.add(node);
+  const dx = to.x - from.x,
+    dy = to.y - from.y;
+  await run.animate(
+    node,
     [
-      { transform: "translate(0,0) rotate(-8deg) scale(1)", opacity: 1 },
+      { transform: "translate(0,0) rotate(-7deg)" },
       {
-        offset: 0.62,
-        transform: `translate(${(end.x - start.x) * 0.65}px,${(end.y - start.y) * 0.65 - 35}px) rotate(${reverse ? -8 : 10}deg) scale(1.12)`,
-        opacity: 1,
+        offset: 0.55,
+        transform: `translate(${dx * 0.55 + lane}px,${dy * 0.55 - 28}px) rotate(8deg) scale(1.08)`,
       },
-      {
-        transform: `translate(${end.x - start.x}px,${end.y - start.y}px) rotate(${reverse ? -4 : 6}deg) scale(1)`,
-        opacity: 1,
-      },
+      { transform: `translate(${dx}px,${dy}px) rotate(5deg)` },
     ],
-    420,
+    460,
     delay,
   );
-  el.remove();
-  ghosts.delete(el);
 }
-/** Animate only public facts; opponent draws always use card backs. */
+function effect(
+  run: MotionRun,
+  kind: string,
+  title: string,
+  subtitle: string,
+  icon: string,
+) {
+  if (run.aborted) return;
+  const node = document.createElement("div");
+  node.className = "game-effect";
+  node.dataset.effect = kind;
+  node.setAttribute("aria-hidden", "true");
+  const mark = document.createElement("span");
+  mark.className = "effect-mark";
+  mark.textContent = icon;
+  const text = document.createElement("div");
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  const detail = document.createElement("small");
+  detail.textContent = subtitle;
+  text.append(heading, detail);
+  node.append(mark, text);
+  run.add(node);
+  void run.animate(
+    node,
+    [
+      { opacity: 0.5, transform: "translateX(-50%) scale(.92)" },
+      { opacity: 1, transform: "translateX(-50%) scale(1)" },
+    ],
+    180,
+  );
+  return node;
+}
+export async function opening(
+  next: View,
+  signal: AbortSignal,
+  hooks: { reveal?: () => void } = {},
+) {
+  const run = new MotionRun(signal);
+  try {
+    effect(
+      run,
+      "deal",
+      "新一局 · 翻开首张牌",
+      "数字牌决定起始颜色，准备出牌。",
+      "✦",
+    );
+    if (!next.top || run.aborted) return;
+    if (reduced()) {
+      hooks.reveal?.();
+      await run.wait(650);
+      return;
+    }
+    const from = anchor(raw(".draw-pile")),
+      to = anchor(raw(".discard"), "table");
+    const node = document.createElement("div");
+    node.className = "opening-card flying-card";
+    node.setAttribute("aria-hidden", "true");
+    node.innerHTML = `<div class="flip-card-inner"><div class="flip-back motion-back">${backMarkup}</div><div class="flip-front">${cardMarkup(next.top)}</div></div>`;
+    Object.assign(node.style, {
+      left: `${from.x}px`,
+      top: `${from.y}px`,
+      width: `${to.width}px`,
+      height: `${to.height}px`,
+    });
+    run.add(node);
+    await run.animate(
+      node,
+      [
+        { transform: "translate(0,0) rotate(-7deg)" },
+        {
+          transform: `translate(${to.x - from.x}px,${to.y - from.y}px) rotate(5deg)`,
+        },
+      ],
+      360,
+    );
+    if (run.aborted) return;
+    hooks.reveal?.();
+    await run.animate(
+      node.querySelector<HTMLElement>(".flip-card-inner")!,
+      [{ transform: "rotateY(0deg)" }, { transform: "rotateY(180deg)" }],
+      560,
+    );
+    await run.wait(220);
+  } finally {
+    run.finish();
+  }
+}
+/** Only an accepted public event is animated; private opponent cards remain backs. */
 export async function transition(
   previous: View,
   next: View,
   signal: AbortSignal,
+  hooks: { effect?: () => void } = {},
 ) {
-  const e = next.event;
-  if (!e) return;
-  const started = performance.now();
-  if (e.card) {
-    const source =
-      e.actor === next.me
-        ? document.querySelector<HTMLElement>(`[data-card="${e.card.id}"]`)
-        : undefined;
-    // The face of an opponent's played card is public only after server acceptance.
-    let face: HTMLElement | undefined = source ?? undefined;
-    if (!face) {
-      const holder = document.createElement("div");
-      holder.innerHTML = cardMarkup(e.card);
-      face = holder.firstElementChild as HTMLElement | undefined;
+  const run = new MotionRun(signal),
+    e = next.event;
+  try {
+    if (!e || run.aborted) return;
+    const actor = e.actor === next.me ? "你" : next.players[e.actor].name;
+    if (e.card) {
+      const source =
+        e.actor === next.me
+          ? document.querySelector<HTMLElement>(
+              `.hand [data-card="${e.card.id}"]`,
+            )
+          : null;
+      const from = source
+          ? anchor(source.getBoundingClientRect())
+          : seat(e.actor, next),
+        to = anchor(raw(".discard"), "table");
+      const label = effect(
+        run,
+        "play",
+        `${actor}出牌`,
+        `${e.card.color ? colorNames[e.card.color] + " " : ""}${e.card.kind === "number" ? e.card.value : kindNames[e.card.kind]}`,
+        "↗",
+      );
+      run.hide(source);
+      const extras =
+        e.card.kind === "discardAll" && e.actor === next.me
+          ? previous.hand
+              .filter((c) => c.color === e.card!.color && c.id !== e.card!.id)
+              .slice(0, 4)
+          : [];
+      await Promise.all([
+        fly(run, from, to, source ?? faceNode(e.card)),
+        ...extras.map((card, i) => {
+          const el = document.querySelector<HTMLElement>(
+            `.hand [data-card="${card.id}"]`,
+          );
+          run.hide(el);
+          return fly(
+            run,
+            anchor(el?.getBoundingClientRect()),
+            to,
+            el ?? undefined,
+            (i + 1) * 35,
+          );
+        }),
+      ]);
+      if (reduced()) await run.wait(180);
+      label?.remove();
     }
-
-    const extras =
-      e.card.kind === "discardAll" && e.actor === next.me
-        ? previous.hand
-            .filter((c) => c.color === e.card!.color && c.id !== e.card!.id)
-            .slice(0, 4)
-        : [];
-    const from = source?.getBoundingClientRect() ?? seat(e.actor, next);
-    if (!reduced()) source?.classList.add("departing");
-    await Promise.all([
-      fly(from, rect(".discard"), face),
-      ...extras.map((c, i) => {
-        const el = document.querySelector<HTMLElement>(`[data-card="${c.id}"]`);
-        if (!reduced()) el?.classList.add("departing");
-        return fly(
-          el?.getBoundingClientRect(),
-          rect(".discard"),
-          el ?? undefined,
-          35 * (i + 1),
+    if (run.aborted) return;
+    const skip =
+      e.card &&
+      ["skip", "reverse", "skipAll"].includes(e.card.kind) &&
+      next.phase !== "finished";
+    if (e.swapped) {
+      hooks.effect?.();
+      effect(
+        run,
+        "swap",
+        "交换全部手牌",
+        "双方手牌对调，换手完成后再继续。",
+        "⇄",
+      );
+      await Promise.all([
+        fly(run, seat(0, next), seat(1, next), undefined, 0, -38),
+        fly(run, seat(1, next), seat(0, next), undefined, 0, 38),
+        run.wait(650),
+      ]);
+    } else if (skip) {
+      hooks.effect?.();
+      effect(
+        run,
+        "skip",
+        e.actor === next.me ? "对手被跳过" : "你被跳过",
+        e.actor === next.me
+          ? "还是你的回合，再出一张！"
+          : `${actor}继续出牌，请等待。`,
+        "⊘",
+      );
+      const target = document.querySelector<HTMLElement>(
+        e.actor === next.me ? ".opponent" : ".hand-heading",
+      );
+      if (target)
+        await run.animate(
+          target,
+          [
+            { filter: "brightness(1)" },
+            { filter: "brightness(.55)" },
+            { filter: "brightness(1)" },
+          ],
+          400,
         );
-      }),
-    ]);
+      await run.wait(reduced() ? 650 : 300);
+    } else if (e.discarded > 1) {
+      hooks.effect?.();
+      effect(
+        run,
+        "discard",
+        `一次打出 ${e.discarded} 张`,
+        "同色手牌已全部弃掉。",
+        "⇊",
+      );
+      await run.wait(400);
+    } else if (e.action === "challenge") {
+      effect(
+        run,
+        "challenge",
+        e.challengeWon ? "质疑成功" : "质疑失败",
+        describeEvent(next).detail,
+        e.challengeWon ? "✓" : "!",
+      );
+    }
+    if (run.aborted) return;
+    const draws: Promise<void>[] = [];
+    for (let p = 0; p < 2; p++)
+      if (e.drawn[p] > 0) {
+        // The challenge caption already explains its penalty. Keep that result
+        // readable while cards move instead of covering it with a second badge.
+        if (e.action !== "challenge")
+          effect(
+            run,
+            "draw",
+            `${p === next.me ? "你" : next.players[p].name}抽 ${e.drawn[p]} 张`,
+            "新牌即将加入手牌。",
+            "+",
+          );
+        for (let i = 0; i < Math.min(e.drawn[p], 5); i++)
+          draws.push(
+            fly(
+              run,
+              anchor(raw(".draw-pile")),
+              seat(p, next),
+              undefined,
+              i * 70,
+            ),
+          );
+      }
+    if (draws.length || e.drawn.some((n) => n > 0))
+      await Promise.all([...draws, run.wait(650)]);
+    else if (!e.swapped && !skip) await run.wait(e.card ? 180 : 550);
+  } finally {
+    run.finish();
   }
-  if (signal.aborted) return;
-  if (e.swapped)
-    await Promise.all([
-      fly(seat(0, next), seat(1, next), undefined, 0, true),
-      fly(seat(1, next), seat(0, next)),
-    ]);
-  if (signal.aborted) return;
-  const draws: Promise<void>[] = [];
-  for (let p = 0; p < 2; p++)
-    for (let i = 0; i < Math.min(e.drawn[p], 5); i++)
-      draws.push(fly(rect(".draw-pile"), seat(p, next), undefined, i * 65));
-  await Promise.all(draws);
-  // Same readable beat for reduced-motion users; no flying or shaking.
-  const remaining = 620 - (performance.now() - started);
-  if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
 }
+/** Add a short highlight; never set hand-card opacity to zero while waiting. */
 export function settle(previous: View | null, next: View) {
   if (reduced()) return;
-  const prior = new Set(previous?.hand.map((c) => c.id) ?? []);
+  const run = new MotionRun(),
+    prior = new Set(previous?.hand.map((c) => c.id) ?? []),
+    jobs: Promise<void>[] = [];
   document
     .querySelectorAll<HTMLElement>(".hand [data-card]")
-    .forEach((el, i) => {
-      if (!prior.has(el.dataset.card!))
-        void animate(
-          el,
-          [
-            { opacity: 0, transform: "translateY(18px) scale(.9)" },
-            { opacity: 1, transform: "translateY(0) scale(1)" },
-          ],
-          280,
-          Math.min(i, 7) * 30,
+    .forEach((node, i) => {
+      if (!prior.has(node.dataset.card!))
+        jobs.push(
+          run.animate(
+            node,
+            [
+              { transform: "translateY(9px) scale(.97)" },
+              { transform: "translateY(0) scale(1)" },
+            ],
+            260,
+            Math.min(i, 5) * 25,
+          ),
         );
     });
   if (previous?.top?.id !== next.top?.id) {
-    const top = document.querySelector<HTMLElement>(".discard .card");
+    const top = document.querySelector<HTMLElement>(".discard > .card");
     if (top)
-      void animate(
-        top,
-        [{ transform: "scale(1.09)" }, { transform: "scale(1)" }],
-        220,
+      jobs.push(
+        run.animate(
+          top,
+          [{ transform: "scale(1.06)" }, { transform: "scale(1)" }],
+          200,
+        ),
       );
   }
   if (next.phase === "finished" && previous?.phase !== "finished") {
     const result = document.querySelector<HTMLElement>(".result");
     if (result)
-      void animate(
-        result,
-        [
-          { opacity: 0, transform: "translateY(14px)" },
-          { opacity: 1, transform: "translateY(0)" },
-        ],
-        380,
+      jobs.push(
+        run.animate(
+          result,
+          [{ transform: "translateY(9px)" }, { transform: "translateY(0)" }],
+          300,
+        ),
       );
   }
+  void Promise.all(jobs).finally(() => run.finish());
 }
