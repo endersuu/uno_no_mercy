@@ -12,6 +12,8 @@ import { gameAudio } from "./audio";
 import { cardMarkup } from "./cards";
 import "./style.css";
 import "./feedback.css";
+import "./viewport.css";
+import { layoutHand } from "./hand-layout";
 import {
   cancelMotion,
   describeEvent,
@@ -37,6 +39,10 @@ let pending: Card | null = null;
 let presenting = false;
 let queue: { view: View; opening: boolean }[] = [];
 let roundOpening = false;
+let handPage = 0;
+let handPageSize = 1;
+let handRound: string | null = null;
+let handObserver: ResizeObserver | null = null;
 let restoringSeat = false;
 let latest: View | null = null;
 let generation = 0;
@@ -53,7 +59,7 @@ function syncControls() {
   if (busy || presenting) {
     app
       .querySelectorAll<HTMLButtonElement>(
-        ".hand button, .hand-actions button, .play-controls button, #rematch, #entry button",
+        ".hand button, .hand-actions button, .hand-navigation button, .play-controls button, #rematch, #entry button",
       )
       .forEach((el) => (el.disabled = true));
   }
@@ -374,7 +380,7 @@ function table(v: View) {
     paused = v.pausedBy !== null || v.disconnected || !online,
     ended = v.phase === "finished",
     canAct = !paused && !ended && !busy && !presenting;
-  return `<main class="game" data-opening="${roundOpening}" data-turn="${turnInfo(v).mode}"><div class="game-heading"><div><span class="eyebrow">THE FRIENDLY SHOWDOWN</span><h2>这一局，不留情。</h2></div><button class="ghost" id="pause" ${ended ? "disabled" : ""}>Ⅱ 暂停 / 看规则</button></div><section class="turn-banner" role="status" aria-live="polite"><span class="turn-icon">${turnInfo(v).icon}</span><div><b>${esc(turnInfo(v).title)}</b><p>${esc(turnInfo(v).hint)}</p></div></section><section class="table"><div class="opponent"><span class="avatar">${esc(other.name[0] ?? "?")}</span><div><b>${esc(other.name)}</b><span>${other.connected ? "在线" : "离线"} · ${other.count} 张手牌</span></div><div class="back-cards" aria-hidden="true">${Array.from({ length: Math.min(other.count, 7) }, () => "<i>U!</i>").join("")}</div><span class="turn-pill ${!myTurn && !ended ? "current" : ""}">${!myTurn && !ended ? "TA 的回合" : "对手"}</span></div><div class="table-center"><div class="draw-pile" aria-hidden="true"><span>UNO</span><small>NO MERCY</small></div><div class="discard">${v.top ? card(v.top) : ""}</div><div class="table-info"><span class="eyebrow">CURRENT COLOR</span><b class="color-indicator ${v.color}">${v.color ? colorNames[v.color] : ""}</b><span>${v.penalty ? `累计罚抽 <strong>+${v.penalty}</strong>` : "匹配颜色、数字或图案"}</span></div></div><div class="action-receipt" data-tone="${feedback?.tone ?? "normal"}"><span>刚刚发生</span><b>${esc(feedback?.title ?? "手牌已发好")}</b><p>${esc(feedback?.detail ?? "每人 7 张，准备开始。")}</p></div><div class="table-status ${myTurn && !paused && !ended ? "your-turn" : ""}" aria-live="polite">${ended ? "本局结束" : paused ? "Ⅱ 对局已暂停" : presenting ? "正在展示本次操作…" : myTurn ? "轮到你了，出一张好牌。" : "等待对手出牌…"}</div></section>${paused && !ended ? `<section class="pause-banner"><div><b>${!online ? "网络已断开，正在尝试重连" : v.disconnected ? "对手断线，对局已暂停" : "规则时间，慢慢看。"}</b><p>${v.disconnected ? `<span id="countdown"></span> · 原标签页可重连` : v.pausedBy === v.me ? "你发起了暂停，准备好后继续。" : "对手正在查看规则，请等待对方继续。"}</p></div>${v.pausedBy === v.me ? `<button class="primary" id="resume" ${!online || busy ? "disabled" : ""}>继续游戏 →</button>` : ""}</section>` : ""}${ended ? `<section class="result"><div><span class="eyebrow">THAT’S A WRAP</span><h2>${v.winner === v.me ? "这局，你赢了！" : "这局，让 TA 赢了。"}</h2><p>${esc(v.reason)}</p></div><div>${v.closed ? '<button class="primary" id="back-home">回到首页 →</button>' : `<button class="primary" id="rematch" ${me.rematch || busy || !online ? "disabled" : ""}>${me.rematch ? "已准备，等待对手…" : "再来一局 ↗"}</button><p class="small-note">${other.rematch ? "对方已准备好" : "双方同意后重新发牌"}</p>`}</div></section>` : ""}<section class="hand-section"><div class="hand-heading"><div><h3>你的手牌 <span>${me.count}</span><strong class="hand-turn-tag"></strong></h3><p>${!canAct ? "" : myTurn ? (v.roulette ? "选择轮盘颜色，然后抽到该颜色为止。" : v.penalty ? `叠加 +${v.lastPenalty} 或更大的罚抽牌，或接受罚抽。` : "亮起的牌可以打出。") : "想好下一张，轮到你就出。"}</p></div><div class="hand-actions">${canAct && v.canCatch ? '<button class="danger" id="catch">抓漏喊 UNO</button>' : ""}<button class="uno-button" id="uno" ${!canAct || me.count !== 1 ? "disabled" : ""}>UNO!</button></div></div><div class="hand">${v.hand.map((c) => card(c, true, canAct && v.playable.includes(c.id))).join("")}</div><div class="play-controls"><label class="check-label"><input id="auto-uno" type="checkbox" ${uno ? "checked" : ""}> 出牌时喊 UNO</label><div class="button-row">${myTurn && v.challenge ? `<button class="ghost" id="challenge" ${!canAct ? "disabled" : ""}>质疑 +4</button>` : ""}${myTurn && v.roulette ? `<button class="primary" id="roulette" ${!canAct ? "disabled" : ""}>选择轮盘颜色 →</button>` : `<button class="primary" id="draw" ${!canAct || !myTurn || (!v.penalty && v.playable.length > 0) ? "disabled" : ""}>${v.penalty ? `接受 +${v.penalty} 张` : "抽到可出的牌"} ↓</button>`}</div></div></section><details class="activity"><summary>本局动态 <span>${esc(v.log.at(-1) ?? "")}</span></summary><ol>${v.log
+  return `<main class="game" data-opening="${roundOpening}" data-turn="${turnInfo(v).mode}"><div class="game-heading"><div><span class="eyebrow">THE FRIENDLY SHOWDOWN</span><h2>这一局，不留情。</h2></div><button class="ghost" id="pause" ${ended ? "disabled" : ""}>Ⅱ 暂停 / 看规则</button></div><section class="turn-banner" role="status" aria-live="polite"><span class="turn-icon">${turnInfo(v).icon}</span><div><b>${esc(turnInfo(v).title)}</b><p>${esc(turnInfo(v).hint)}</p></div></section><section class="table"><div class="opponent"><span class="avatar">${esc(other.name[0] ?? "?")}</span><div><b>${esc(other.name)}</b><span>${other.connected ? "在线" : "离线"} · ${other.count} 张手牌</span></div><div class="back-cards" aria-hidden="true">${Array.from({ length: Math.min(other.count, 7) }, () => "<i>U!</i>").join("")}</div><span class="turn-pill ${!myTurn && !ended ? "current" : ""}">${!myTurn && !ended ? "TA 的回合" : "对手"}</span></div><div class="table-center"><div class="draw-pile" aria-hidden="true"><span>UNO</span><small>NO MERCY</small></div><div class="discard">${v.top ? card(v.top) : ""}</div><div class="table-info"><span class="eyebrow">CURRENT COLOR</span><b class="color-indicator ${v.color}">${v.color ? colorNames[v.color] : ""}</b><span>${v.penalty ? `累计罚抽 <strong>+${v.penalty}</strong>` : "匹配颜色、数字或图案"}</span></div></div><div class="action-receipt" data-tone="${feedback?.tone ?? "normal"}"><span>刚刚发生</span><b>${esc(feedback?.title ?? "手牌已发好")}</b><p>${esc(feedback?.detail ?? "每人 7 张，准备开始。")}</p></div><div class="table-status ${myTurn && !paused && !ended ? "your-turn" : ""}" aria-live="polite">${ended ? "本局结束" : paused ? "Ⅱ 对局已暂停" : presenting ? "正在展示本次操作…" : myTurn ? "轮到你了，出一张好牌。" : "等待对手出牌…"}</div></section><div class="round-notice">${paused && !ended ? `<section class="pause-banner"><div><b>${!online ? "网络已断开，正在尝试重连" : v.disconnected ? "对手断线，对局已暂停" : "规则时间，慢慢看。"}</b><p>${v.disconnected ? `<span id="countdown"></span> · 原标签页可重连` : v.pausedBy === v.me ? "你发起了暂停，准备好后继续。" : "对手正在查看规则，请等待对方继续。"}</p></div>${v.pausedBy === v.me ? `<button class="primary" id="resume" ${!online || busy ? "disabled" : ""}>继续游戏 →</button>` : ""}</section>` : ""}${ended ? `<section class="result"><div><span class="eyebrow">THAT’S A WRAP</span><h2>${v.winner === v.me ? "这局，你赢了！" : "这局，让 TA 赢了。"}</h2><p>${esc(v.reason)}</p></div><div>${v.closed ? '<button class="primary" id="back-home">回到首页 →</button>' : `<button class="primary" id="rematch" ${me.rematch || busy || !online ? "disabled" : ""}>${me.rematch ? "已准备，等待对手…" : "再来一局 ↗"}</button><p class="small-note">${other.rematch ? "对方已准备好" : "双方同意后重新发牌"}</p>`}</div></section>` : ""}</div><section class="hand-section"><div class="hand-heading"><div><h3>你的手牌 <span>${me.count}</span><strong class="hand-turn-tag"></strong></h3><p>${!canAct ? "" : myTurn ? (v.roulette ? "选择轮盘颜色，然后抽到该颜色为止。" : v.penalty ? `叠加 +${v.lastPenalty} 或更大的罚抽牌，或接受罚抽。` : "亮起的牌可以打出。") : "想好下一张，轮到你就出。"}</p></div><div class="hand-actions">${canAct && v.canCatch ? '<button class="danger" id="catch">抓漏喊 UNO</button>' : ""}<button class="uno-button" id="uno" ${!canAct || me.count !== 1 ? "disabled" : ""}>UNO!</button></div><nav class="hand-navigation" aria-label="手牌翻页"><button class="ghost compact" id="hand-prev" aria-label="上一组手牌">‹</button><span class="hand-page-label" role="status" aria-live="polite"></span><button class="ghost compact" id="hand-next" aria-label="下一组手牌">›</button><button class="ghost compact" id="hand-playable" hidden>查看可出牌</button></nav></div><div class="hand" role="group" aria-label="你的手牌"></div><div class="play-controls"><label class="check-label"><input id="auto-uno" type="checkbox" ${uno ? "checked" : ""}> 出牌时喊 UNO</label><div class="button-row">${myTurn && v.challenge ? `<button class="ghost" id="challenge" ${!canAct ? "disabled" : ""}>质疑 +4</button>` : ""}${myTurn && v.roulette ? `<button class="primary" id="roulette" ${!canAct ? "disabled" : ""}>选择轮盘颜色 →</button>` : `<button class="primary" id="draw" ${!canAct || !myTurn || (!v.penalty && v.playable.length > 0) ? "disabled" : ""}>${v.penalty ? `接受 +${v.penalty} 张` : "抽到可出的牌"} ↓</button>`}</div></div></section><details class="activity"><summary>本局动态 <span>${esc(v.log.at(-1) ?? "")}</span></summary><ol>${v.log
     .slice()
     .reverse()
     .map((l) => `<li>${esc(l)}</li>`)
@@ -388,6 +394,9 @@ function render(force = false) {
     syncControls();
     return;
   }
+  handObserver?.disconnect();
+  const gameScreen = !!state && state.phase !== "waiting";
+  document.body.classList.toggle("game-screen", gameScreen);
   const activityOpen =
     !!app.querySelector<HTMLDetailsElement>(".activity")?.open;
   const focused = document.activeElement as HTMLElement | null;
@@ -460,7 +469,94 @@ function render(force = false) {
     const room = roomFromUrl();
     await enter(room ? "join" : "create", name, room);
   });
-  app.querySelectorAll<HTMLButtonElement>("[data-card]").forEach((el) =>
+  if (gameScreen && state) {
+    if (handRound !== state.roundId) {
+      handPage = 0;
+      handRound = state.roundId;
+    }
+    renderHand();
+    on("hand-prev", "click", () => changeHandPage(handPage - 1));
+    on("hand-next", "click", () => changeHandPage(handPage + 1));
+    const hand = app.querySelector<HTMLElement>(".hand")!;
+    let lastBox = hand.getBoundingClientRect();
+    handObserver = new ResizeObserver(() => {
+      const box = hand.getBoundingClientRect();
+      // The initial observer delivery must not replace cards whose entrance
+      // animation has just started. Only a real size change needs new paging.
+      if (box.width !== lastBox.width || box.height !== lastBox.height) {
+        lastBox = box;
+        if (!presenting) renderHand();
+      }
+    });
+    handObserver.observe(hand);
+  }
+  const activity = app.querySelector<HTMLDetailsElement>(".activity");
+  if (activity) activity.open = activityOpen;
+  if (!focus && focusedId)
+    document.getElementById(focusedId)?.focus({ preventScroll: true });
+  else if (focusedCard)
+    app
+      .querySelector<HTMLElement>(`[data-card="${focusedCard}"]`)
+      ?.focus({ preventScroll: true });
+  syncControls();
+  countdown();
+}
+function changeHandPage(page: number) {
+  if (busy || presenting) return;
+  handPage = page;
+  renderHand();
+}
+function renderHand() {
+  const hand = app.querySelector<HTMLElement>(".hand");
+  if (!hand || !state) return;
+  const v = state;
+  const focusedCard = (document.activeElement as HTMLElement | null)?.dataset
+    .card;
+  const previousFirst = handPage * handPageSize;
+  const layout = layoutHand(hand, v.hand.length);
+  if (layout.pageSize !== handPageSize)
+    handPage = Math.floor(previousFirst / layout.pageSize);
+  handPageSize = layout.pageSize;
+  const pages = Math.max(1, Math.ceil(v.hand.length / handPageSize));
+  handPage = Math.max(0, Math.min(pages - 1, handPage));
+  const start = handPage * handPageSize;
+  const visible = v.hand.slice(start, start + handPageSize);
+  const canAct =
+    online &&
+    !v.disconnected &&
+    v.pausedBy === null &&
+    v.phase === "playing" &&
+    !busy &&
+    !presenting;
+  hand.innerHTML = visible
+    .map((c) => card(c, true, canAct && v.playable.includes(c.id)))
+    .join("");
+  const label = app.querySelector<HTMLElement>(".hand-page-label")!;
+  label.textContent = v.hand.length
+    ? `${start + 1}–${start + visible.length} / ${v.hand.length} 张`
+    : "0 张";
+  label.setAttribute("aria-label", `第 ${handPage + 1} 组，共 ${pages} 组手牌`);
+  const previous = app.querySelector<HTMLButtonElement>("#hand-prev")!;
+  const next = app.querySelector<HTMLButtonElement>("#hand-next")!;
+  previous.disabled = busy || presenting || handPage === 0;
+  next.disabled = busy || presenting || handPage === pages - 1;
+  const jump = app.querySelector<HTMLButtonElement>("#hand-playable")!;
+  const elsewhere = v.playable.filter(
+    (id) => !visible.some((c) => c.id === id),
+  ).length;
+  jump.hidden = !elsewhere || v.turn !== v.me || v.phase !== "playing";
+  jump.disabled = !canAct;
+  jump.textContent = `另有 ${elsewhere} 张可出 →`;
+  // Choose a different group even if the current one already has playable cards.
+  jump.onclick = () => {
+    const index = v.hand.findIndex(
+      (c) =>
+        v.playable.includes(c.id) &&
+        !visible.some((shown) => shown.id === c.id),
+    );
+    if (index >= 0) changeHandPage(Math.floor(index / handPageSize));
+  };
+  hand.querySelectorAll<HTMLButtonElement>("[data-card]").forEach((el) =>
     el.addEventListener("click", async () => {
       const c = state?.hand.find((c) => c.id === el.dataset.card);
       if (!c) return;
@@ -474,16 +570,10 @@ function render(force = false) {
       }
     }),
   );
-  const activity = app.querySelector<HTMLDetailsElement>(".activity");
-  if (activity) activity.open = activityOpen;
-  if (!focus && focusedId)
-    document.getElementById(focusedId)?.focus({ preventScroll: true });
-  else if (focusedCard)
-    app
+  if (focusedCard)
+    hand
       .querySelector<HTMLElement>(`[data-card="${focusedCard}"]`)
       ?.focus({ preventScroll: true });
-  syncControls();
-  countdown();
 }
 async function enter(
   type: "join" | "create",
@@ -632,6 +722,7 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("resize", () => {
   if (presenting && latest) applyImmediately(latest);
+  else renderHand();
 });
 
 document.addEventListener(

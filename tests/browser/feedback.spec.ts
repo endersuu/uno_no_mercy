@@ -17,10 +17,21 @@ async function pair(browser: Browser) {
   return { a, b, ca, cb };
 }
 async function makePlayable(p: Page) {
+  if (
+    !(await p.locator(".hand .card:enabled").count()) &&
+    (await p.locator("#hand-playable:enabled:visible").count())
+  )
+    await p.locator("#hand-playable").click();
+
   if (!(await p.locator(".hand .card:enabled").count())) {
     await p.locator("#draw").click();
     await expect(p.locator(".action-receipt b")).toContainText("抽了");
     await expect(p.locator("#app")).toHaveAttribute("data-animating", "false");
+    if (
+      !(await p.locator(".new-card-tag").count()) &&
+      (await p.locator("#hand-playable:enabled:visible").count())
+    )
+      await p.locator("#hand-playable").click();
     await expect(p.locator(".new-card-tag").first()).toBeVisible();
   }
 }

@@ -54,6 +54,12 @@ test("two humans: invite, privacy, rules pause, reconnect, complete round, remat
   async function move(p: Page) {
     await expect(p.locator("#app")).toHaveAttribute("data-animating", "false");
     const before = await p.locator("#app").getAttribute("data-revision");
+    if (
+      !(await p.locator(".hand .card:enabled").count()) &&
+      (await p.locator("#hand-playable:enabled:visible").count())
+    )
+      await p.locator("#hand-playable").click();
+
     if (await p.locator("#roulette:enabled").count()) {
       await p.locator("#roulette").click();
       await p.locator('[data-color="red"]').click();

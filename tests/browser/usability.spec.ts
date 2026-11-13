@@ -2,6 +2,12 @@ import { test, expect, type Page } from "@playwright/test";
 import { build } from "esbuild";
 async function move(page: Page) {
   await expect(page.locator("#app")).toHaveAttribute("data-animating", "false");
+
+  if (
+    !(await page.locator(".hand .card:enabled").count()) &&
+    (await page.locator("#hand-playable:enabled:visible").count())
+  )
+    await page.locator("#hand-playable").click();
   if (await page.locator("#roulette:enabled").count()) {
     await page.locator("#roulette").click();
     await page.locator('[data-color="red"]').click();
