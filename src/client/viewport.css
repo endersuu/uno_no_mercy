@@ -988,7 +988,7 @@ body {
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
+    /* Use native scrolling without the legacy iOS compositing opt-in. */
     scrollbar-width: thin;
     touch-action: pan-y pinch-zoom;
   }

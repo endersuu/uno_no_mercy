@@ -726,8 +726,9 @@ async function denseGame(
   await expect(page.locator(".game")).toBeVisible();
   await settled(page);
 }
-test("number and action card faces remain visible on either turn after phone rotation", async ({
+test("number and action card faces remain visible on either turn after phone rotation and pinch zoom", async ({
   page,
+  browserName,
 }) => {
   const hand: Card[] = [
     ...[0, 6, 9].map((value): Card => ({
@@ -770,6 +771,77 @@ test("number and action card faces remain visible on either turn after phone rot
     await page.setViewportSize({ width: 390, height: 720 });
     await expect(page.locator(".hand .card")).toHaveCount(7);
     expect([...(await visitEveryCard(page))].sort()).toEqual(expectedIds);
+    if (browserName === "chromium") {
+      // Exercise a real visual-viewport scale change, rather than replacing its
+      // properties. Layout must stay stable while the browser repaints the SVGs.
+      const cdp = await page.context().newCDPSession(page);
+      const layout = () =>
+        page.locator(".hand .card").evaluateAll((nodes) =>
+          nodes.map((node) => ({
+            id: node.getAttribute("data-card"),
+            card: node.getBoundingClientRect().toJSON(),
+            art: node.querySelector(".card-art")!.getBoundingClientRect().toJSON(),
+          })),
+        );
+      const beforeLayout = await layout();
+      const before = await page.locator(".hand").screenshot({
+        path: `/tmp/uno-card-faces-turn-${turn}-before-zoom.png`,
+        animations: "disabled",
+      });
+      try {
+        for (const scale of [1.5, 2, 1]) {
+          await cdp.send("Emulation.setPageScaleFactor", {
+            pageScaleFactor: scale,
+          });
+          await expect
+            .poll(() => page.evaluate(() => visualViewport!.scale))
+            .toBeCloseTo(scale, 2);
+          await page.evaluate(
+            () =>
+              new Promise((resolve) =>
+                requestAnimationFrame(() => requestAnimationFrame(resolve)),
+              ),
+          );
+          expect(await layout()).toEqual(beforeLayout);
+        }
+        await assertBoardFits(page);
+        const after = await page.locator(".hand").screenshot({
+          path: `/tmp/uno-card-faces-turn-${turn}-after-zoom.png`,
+          animations: "disabled",
+        });
+        const changedPixels = await page.evaluate(async (images) => {
+          const [a, b] = await Promise.all(
+            images.map(async (encoded) => {
+              const image = new Image();
+              image.src = `data:image/png;base64,${encoded}`;
+              await image.decode();
+              const canvas = document.createElement("canvas");
+              canvas.width = image.naturalWidth;
+              canvas.height = image.naturalHeight;
+              const context = canvas.getContext("2d")!;
+              context.drawImage(image, 0, 0);
+              return context.getImageData(0, 0, canvas.width, canvas.height);
+            }),
+          );
+          if (a.width !== b.width || a.height !== b.height)
+            throw new Error("Hand screenshot dimensions changed after zoom");
+          let changed = 0;
+          for (let i = 0; i < a.data.length; i += 4)
+            for (let channel = 0; channel < 4; channel++)
+              if (Math.abs(a.data[i + channel] - b.data[i + channel]) > 16) {
+                changed++;
+                break;
+              }
+          return changed;
+        }, [before.toString("base64"), after.toString("base64")]);
+        // A zoom round-trip can slightly change edge antialiasing; a missing or
+        // displaced card would alter far more than these few tolerated pixels.
+        expect(changedPixels).toBeLessThanOrEqual(20);
+      } finally {
+        await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+        await cdp.detach();
+      }
+    }
     await page.screenshot({ path: `/tmp/uno-card-faces-turn-${turn}.png` });
   }
 });

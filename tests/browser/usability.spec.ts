@@ -58,9 +58,12 @@ test("turn banner and disabled styles stay clear; real sound cues and persistent
     .evaluate((el) => ({
       opacity: getComputedStyle(el).opacity,
       filter: getComputedStyle(el).filter,
+      faceFilter: getComputedStyle(el.querySelector(".card-art")!).filter,
     }));
+  expect(Number(disabled.opacity)).toBeGreaterThan(0.5);
   expect(Number(disabled.opacity)).toBeLessThan(0.85);
-  expect(disabled.filter).toContain("brightness");
+  expect(disabled.filter).toBe("none");
+  expect(disabled.faceFilter).toBe("none");
   expect(await a.locator(".game .card-art").count()).toBe(8);
   const before = await a.evaluate(() => (window as any).audioStarts);
   await move(a);

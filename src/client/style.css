@@ -1325,6 +1325,8 @@ dialog h2 {
 .card.uno-card {
   -webkit-appearance: none;
   appearance: none;
+  /* UNO faces do not use the legacy card's negative-z background layer. */
+  isolation: auto;
   aspect-ratio: 2 / 3;
   height: auto;
   padding: 0;
@@ -1339,15 +1341,13 @@ dialog h2 {
   display: none;
 }
 .card-art {
-  /* Keep the face in flow: Safari can leave SVG-only card buttons blank when
-     their entire contents are absolutely positioned. */
+  /* Keep SVG-only card buttons populated with normal-flow layout content. */
   position: relative;
   flex: none;
   display: block;
   width: 100%;
   height: 100%;
   overflow: visible;
-  filter: drop-shadow(0 1px 0 #ffffff90);
 }
 .uno-value {
   font-family:
@@ -1581,7 +1581,9 @@ dialog h2 {
 }
 .hand .card.uno-card:disabled {
   opacity: 0.72;
-  filter: brightness(0.85) saturate(0.65);
+  /* Nested SVG/element filters can leave stale tiles during iOS pinch zoom.
+     Opacity and the playable outline already distinguish unavailable cards. */
+  filter: none;
   box-shadow: none;
   cursor: not-allowed;
   transform: none;
