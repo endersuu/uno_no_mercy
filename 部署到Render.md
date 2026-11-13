@@ -55,6 +55,8 @@ Render 的 **Auto-Deploy** 应选择 **After CI Checks Pass**，对应 `render.y
 
 Render 原生自动部署要求连接 GitHub：在 Render 的 **Account Settings → Git Deployment Credentials** 授权仓库，并确认服务的仓库连接使用该凭证。仅填写公开 Git URL 创建的服务不支持原生自动部署，即使显示了仓库地址也不代表已连接。检查已绿但没有部署事件时，先检查该连接。详见 [Render 自动部署](https://render.com/docs/deploys) 与 [GitHub 连接说明](https://render.com/docs/github)。
 
+若服务的 **Git Credentials** 已显示你的邮箱，而 **Use My Credentials** 按钮置灰，不要仅凭按钮状态判断授权缺失。打开 [Render 的 GitHub 应用设置](https://github.com/apps/render/installations/new)，确认 **Repository access** 中包含 `endersuu/uno_no_mercy`；使用 **Only select repositories** 并只选择这个仓库即可。授权设置确认后，用一次新的提交验证：先在 GitHub Actions 看到该提交检查成功，再到 Render 的 Deploys / Events 确认同一提交由自动事件部署；只有 CI 变绿不能证明自动部署已经接通。
+
 自动部署会重启游戏进程并清空旧房间。开发时使用分支和 PR 验证，准备上线再合并到 `main`。
 
 ## 免费实例与房间
