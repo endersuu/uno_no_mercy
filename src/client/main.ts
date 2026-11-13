@@ -445,6 +445,7 @@ function render(force = false) {
     return;
   }
   handObserver?.disconnect();
+  const handScrollTop = app.querySelector<HTMLElement>(".hand")?.scrollTop ?? 0;
   const gameScreen = !!state && state.phase !== "waiting";
   document.body.classList.toggle("game-screen", gameScreen);
   const activityOpen =
@@ -522,6 +523,7 @@ function render(force = false) {
     await enter(room ? "join" : "create", name, room);
   });
   if (gameScreen && state) {
+    const sameHand = handRound === state.roundId;
     if (handRound !== state.roundId) {
       handPage = 0;
       handRound = state.roundId;
@@ -530,13 +532,15 @@ function render(force = false) {
     on("hand-prev", "click", () => changeHandPage(handPage - 1));
     on("hand-next", "click", () => changeHandPage(handPage + 1));
     const hand = app.querySelector<HTMLElement>(".hand")!;
-    let lastBox = hand.getBoundingClientRect();
+    if (sameHand) hand.scrollTop = handScrollTop;
+    let lastWidth = hand.clientWidth;
+    let lastHeight = hand.clientHeight;
     handObserver = new ResizeObserver(() => {
-      const box = hand.getBoundingClientRect();
       // The initial observer delivery must not replace cards whose entrance
       // animation has just started. Only a real size change needs new paging.
-      if (box.width !== lastBox.width || box.height !== lastBox.height) {
-        lastBox = box;
+      if (hand.clientWidth !== lastWidth || hand.clientHeight !== lastHeight) {
+        lastWidth = hand.clientWidth;
+        lastHeight = hand.clientHeight;
         if (!presenting) renderHand();
       }
     });
@@ -562,10 +566,13 @@ function renderHand() {
   const hand = app.querySelector<HTMLElement>(".hand");
   if (!hand || !state) return;
   const v = state;
+  const scrollTop = hand.scrollTop;
   const focusedCard = (document.activeElement as HTMLElement | null)?.dataset
     .card;
   const previousFirst = handPage * handPageSize;
   const layout = layoutHand(hand, v.hand.length);
+  app.querySelector<HTMLElement>(".hand-navigation")!.hidden =
+    !layout.paginated;
   if (layout.pageSize !== handPageSize)
     handPage = Math.floor(previousFirst / layout.pageSize);
   handPageSize = layout.pageSize;
@@ -584,6 +591,7 @@ function renderHand() {
   hand.innerHTML = visible
     .map((c) => card(c, true, canAct && v.playable.includes(c.id)))
     .join("");
+  hand.scrollTop = layout.paginated ? 0 : scrollTop;
   const label = app.querySelector<HTMLElement>(".hand-page-label")!;
   label.textContent = v.hand.length
     ? `${start + 1}–${start + visible.length} / ${v.hand.length} 张`
@@ -803,10 +811,34 @@ socket.on("state", receive);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && latest) applyImmediately(latest);
 });
-window.addEventListener("resize", () => {
+let viewportFrame = 0;
+let viewportWidth = window.innerWidth;
+let viewportHeight = 0;
+function syncViewport() {
+  const visual = window.visualViewport;
+  // Preserve pinch zoom. On Safari, the visible height also follows the address
+  // bar and keyboard, which can be smaller than the layout viewport.
+  if (visual && Math.abs(visual.scale - 1) > 0.01) return;
+  const height = Math.floor(visual?.height ?? window.innerHeight);
+  const width = window.innerWidth;
+  const changed = height !== viewportHeight || width !== viewportWidth;
+  viewportHeight = height;
+  viewportWidth = width;
+  document.documentElement.style.setProperty(
+    "--game-viewport-height",
+    `${height}px`,
+  );
+  if (!changed) return;
   if (presenting && latest) applyImmediately(latest);
   else renderHand();
-});
+}
+function queueViewportSync() {
+  cancelAnimationFrame(viewportFrame);
+  viewportFrame = requestAnimationFrame(syncViewport);
+}
+window.addEventListener("resize", queueViewportSync);
+window.visualViewport?.addEventListener("resize", queueViewportSync);
+syncViewport();
 
 document.addEventListener(
   "pointerdown",
