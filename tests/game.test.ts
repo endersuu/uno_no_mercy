@@ -63,6 +63,9 @@ test("deal seven each, numerical starter, card conservation", () => {
     );
     assert.equal(g.discard.at(-1)?.kind, "number");
     assert.equal(g.deck.length + g.discard.length + 14, 168);
+    assert.equal(g.activity.length, 1);
+    assert.equal(g.activity[0].event, null);
+    assert.equal(g.activity[0].color, g.color);
   }
 });
 test("illegal moves are rejected without changing state", () => {
@@ -86,6 +89,8 @@ for (const kind of ["skip", "reverse", "skipAll"] as const)
     g.hands[0][0] = c(kind);
     play(g, 0, g.hands[0][0]);
     assert.equal(g.turn, 0);
+    assert.equal(g.activity.at(-1)!.event!.card!.kind, kind);
+    assert.equal(g.activity.at(-1)!.turn, 0);
   });
 test("blue skip can be followed by red skip in 1v1 and changes the active color", () => {
   const g = fixture();
@@ -122,6 +127,7 @@ for (const n of [0, 7])
     );
     assert.equal(g.hands[1].length, 1);
     assert.equal(g.vulnerable[1], true);
+    assert.equal(g.activity.at(-1)!.event!.swapped, true);
   });
 test("discard all keeps action on top and does not execute discarded effects", () => {
   const g = fixture();
@@ -323,6 +329,16 @@ test("roulette ignores wilds, takes matching color, skips turn", () => {
       (line) => line.includes("轮盘公开翻牌") && line.includes("蓝色 1"),
     ),
   );
+  const entry = g.activity.at(-1)!;
+  assert.equal(entry.event!.action, "roulette");
+  assert.equal(entry.color, "blue");
+  assert.deepEqual(entry.event!.drawn, [0, 3]);
+  assert.equal(entry.event!.card, undefined);
+  assert.ok(
+    entry.messages!.some(
+      (line) => line.includes("轮盘公开翻牌") && line.includes("蓝色 1"),
+    ),
+  );
 });
 test("last card wins before swap or penalty effect", () => {
   for (const card of [c("number", "red", 7), c("wild10", null), c("draw4")]) {
@@ -331,6 +347,8 @@ test("last card wins before swap or penalty effect", () => {
     play(g, 0, card);
     assert.equal(g.winner, 0);
     assert.equal(g.penalty, 0);
+    assert.equal(g.activity.at(-1)!.winner, 0);
+    assert.equal(g.activity.at(-1)!.penalty, 0);
   }
 });
 test("UNO catch, declaration, and next action window", () => {
@@ -415,4 +433,75 @@ test("swap and final-card events describe the resolved effect", () => {
   play(h, 0, h.hands[0][0]);
   assert.equal(h.event?.swapped, false);
   assert.equal(h.winner, 0);
+});
+
+test("public activity preserves the played faces and the resolved state of each stacked action", () => {
+  const g = fixture();
+  const first = c("draw2"),
+    second = c("draw4");
+  g.hands = [
+    [first, c("number", "blue", 9)],
+    [second, c("number", "red", 1)],
+  ];
+  play(g, 0, first);
+  const firstEntry = structuredClone(g.activity.at(-1)!);
+  play(g, 1, second);
+  const secondEntry = structuredClone(g.activity.at(-1)!);
+  act(g, 0, { type: "challenge" });
+  assert.deepEqual(g.activity[1], firstEntry);
+  assert.deepEqual(g.activity[2], secondEntry);
+  assert.deepEqual(firstEntry.event!.card, first);
+  assert.equal(firstEntry.penalty, 2);
+  assert.equal(firstEntry.previousPenalty, 0);
+  assert.equal(firstEntry.turn, 1);
+  assert.deepEqual(secondEntry.event!.card, second);
+  assert.equal(secondEntry.penalty, 6);
+  assert.equal(secondEntry.previousPenalty, 2);
+  assert.equal(secondEntry.turn, 0);
+  const challenged = g.activity.at(-1)!;
+  assert.equal(challenged.event!.challengeWon, true);
+  assert.deepEqual(challenged.event!.drawn, [0, 6]);
+  assert.equal(challenged.previousPenalty, 6);
+  assert.equal(challenged.penalty, 0);
+  assert.equal(challenged.turn, 0);
+  const before = JSON.stringify(g.activity);
+  assert.throws(() => act(g, 0, { type: "challenge" }));
+  assert.equal(JSON.stringify(g.activity), before);
+});
+
+test("ordinary and penalty draws expose counts without revealing private drawn faces in activity", () => {
+  for (const penalty of [0, 2]) {
+    const g = fixture();
+    g.hands[0] = [c("number", "blue", 1)];
+    g.deck = [c("number", "red", 2), c("number", "green", 3)];
+    const drawn = [...g.deck];
+    g.penalty = penalty;
+    g.lastPenalty = penalty;
+    act(g, 0, { type: "draw" });
+    const entry = g.activity.at(-1)!;
+    assert.deepEqual(entry.event!.drawn, [2, 0]);
+    assert.equal(entry.event!.card, undefined);
+    assert.equal(entry.previousPenalty, penalty);
+    const serialized = JSON.stringify(g.activity);
+    for (const card of [...drawn, ...g.hands.flat()])
+      assert.equal(serialized.includes(card.id), false);
+    for (const field of ["hands", "deck", "challenge", "vulnerable"])
+      assert.equal(Object.hasOwn(entry, field), false);
+  }
+});
+
+test("public activity keeps only the latest twelve accepted actions and a new round starts fresh", () => {
+  const g = fixture();
+  g.hands[0] = [c()];
+  for (let i = 0; i < 15; i++) act(g, 0, { type: "uno" });
+  assert.equal(g.activity.length, 12);
+  assert.deepEqual(
+    g.activity.map((entry) => entry.id),
+    Array.from({ length: 12 }, (_, i) => i + 4),
+  );
+  assert.ok(g.activity.every((entry) => entry.event!.action === "uno"));
+  const next = newGame();
+  assert.equal(next.activity.length, 1);
+  assert.equal(next.activity[0].id, 0);
+  assert.equal(next.activity[0].event, null);
 });

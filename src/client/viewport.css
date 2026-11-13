@@ -438,11 +438,77 @@ body.game-screen {
 }
 .game-screen .activity[open] summary {
   position: sticky;
+  z-index: 1;
   top: -8px;
   background: #f8fbef;
 }
 .game-screen .activity ol {
   margin: 5px 0;
+}
+.game-screen .activity-list:not(.activity-list-legacy) {
+  padding: 0;
+  list-style: none;
+}
+.game-screen .activity-entry {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  line-height: 1.5;
+}
+.game-screen .activity-entry:last-child {
+  border-bottom: 0;
+}
+.game-screen .activity-card {
+  width: 36px;
+  height: 54px;
+}
+.game-screen .activity-card .card.uno-card {
+  width: 36px;
+  height: 54px;
+  min-width: 0;
+  margin: 0;
+  border-radius: 5px;
+  transform: none;
+  box-shadow: none;
+  cursor: default;
+}
+.game-screen .activity-card .uno-action-label {
+  display: none;
+}
+.game-screen .activity-glyph {
+  width: 36px;
+  min-height: 36px;
+  display: grid;
+  place-content: center;
+  margin-top: 2px;
+  border-radius: 8px;
+  color: #355831;
+  background: #e3ebd6;
+  font-size: 13px;
+  font-weight: 800;
+}
+.game-screen .activity-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.game-screen .activity-title {
+  display: block;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.game-screen .activity-effect,
+.game-screen .activity-public-note {
+  margin: 3px 0 0;
+  color: #4d6348;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.game-screen .activity-public-note {
+  color: #65745d;
 }
 .game-screen .debug-export {
   padding: 8px 0;

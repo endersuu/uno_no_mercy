@@ -228,6 +228,7 @@ export class Rooms {
       debugRounds: this.debug.summaries(r.id),
       roundId: g?.roundId ?? null,
       event: g?.event ?? null,
+      activity: g?.activity ?? [],
       room: r.id,
       revision: r.revision,
       me: p,

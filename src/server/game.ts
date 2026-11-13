@@ -4,6 +4,7 @@ import {
   colorNames,
   kindNames,
   type Action,
+  type ActivityEntry,
   type Card,
   type Color,
   type GameEvent,
@@ -26,6 +27,7 @@ export interface Game {
   winner: number | null;
   reason: string;
   log: string[];
+  activity: ActivityEntry[];
   vulnerable: boolean[];
 }
 export function shuffle<T>(cards: T[]): T[] {
@@ -76,7 +78,7 @@ export function newGame(
   do {
     discard.push(pile.pop()!);
   } while (discard.at(-1)!.kind !== "number");
-  return {
+  const g: Game = {
     roundId: randomUUID(),
     event: null,
     hands,
@@ -91,8 +93,11 @@ export function newGame(
     winner: null,
     reason: "",
     log: ["新一局开始，每人 7 张牌。"],
+    activity: [],
     vulnerable: [false, false],
   };
+  g.activity.push(activityEntry(g, [...g.log]));
+  return g;
 }
 export function amount(c: Card): number {
   return (
@@ -103,7 +108,13 @@ export function amount(c: Card): number {
     )[c.kind] ?? 0
   );
 }
-export function playable(g: Game, c: Card): boolean {
+export function playable(
+  g: Pick<
+    Game,
+    "roulette" | "winner" | "penalty" | "lastPenalty" | "discard" | "color"
+  >,
+  c: Card,
+): boolean {
   if (g.roulette || g.winner !== null) return false;
   if (g.penalty) return amount(c) >= g.lastPenalty;
   const top = g.discard.at(-1)!;
@@ -113,9 +124,30 @@ export function playable(g: Game, c: Card): boolean {
     (c.kind === top.kind && (c.kind !== "number" || c.value === top.value))
   );
 }
+const actionNotes = new WeakMap<Game, string[]>();
 function note(g: Game, text: string) {
+  actionNotes.get(g)?.push(text);
   g.log.push(text);
   g.log = g.log.slice(-12);
+}
+function activityEntry(
+  g: Game,
+  messages: string[],
+  previousPenalty = 0,
+): ActivityEntry {
+  // Record only public facts and the result at this moment, never private hands.
+  return structuredClone({
+    id: g.event?.id ?? 0,
+    event: g.event,
+    color: g.color,
+    turn: g.turn,
+    penalty: g.penalty,
+    previousPenalty,
+    roulette: g.roulette,
+    winner: g.winner,
+    reason: g.reason,
+    messages,
+  });
 }
 function win(g: Game, p: number, reason: string) {
   g.winner = p;
@@ -147,7 +179,14 @@ export function act(g: Game, p: number, a: Action): void {
     a.type === "play" ? g.hands[p].find((c) => c.id === a.cardId) : undefined;
   const previousCount = g.hands[p].length;
   const challengeWon = g.challenge?.illegal;
-  applyAction(g, p, a);
+  const previousPenalty = g.penalty;
+  const messages: string[] = [];
+  actionNotes.set(g, messages);
+  try {
+    applyAction(g, p, a);
+  } finally {
+    actionNotes.delete(g);
+  }
   const swapped =
     !!card &&
     card.kind === "number" &&
@@ -169,6 +208,8 @@ export function act(g: Game, p: number, a: Action): void {
       a.type === "uno" ||
       (a.type === "play" && !!a.uno && g.hands[p].length === 1),
   };
+  g.activity.push(activityEntry(g, messages, previousPenalty));
+  g.activity = g.activity.slice(-12);
 }
 function applyAction(g: Game, p: number, a: Action): void {
   if (g.winner !== null) throw Error("本局已经结束。");

@@ -109,6 +109,19 @@ export interface GameEvent {
   challengeWon?: boolean;
   declaredUno: boolean;
 }
+/** A public action and its resolved state, kept for the visual activity log. */
+export interface ActivityEntry {
+  id: number;
+  event: GameEvent | null;
+  color: Color;
+  turn: number;
+  penalty: number;
+  previousPenalty?: number;
+  roulette: boolean;
+  winner: number | null;
+  reason: string;
+  messages?: string[];
+}
 export interface PlayerView {
   name: string;
   connected: boolean;
@@ -117,6 +130,7 @@ export interface PlayerView {
   rematch: boolean;
 }
 export interface View {
+  activity?: ActivityEntry[];
   debugRounds?: DebugRoundSummary[];
   roundId: string | null;
   event: GameEvent | null;

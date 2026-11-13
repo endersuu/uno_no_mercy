@@ -1,7 +1,7 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
 import { build } from "esbuild";
 import { readFile } from "node:fs/promises";
-import type { Card, View } from "../../src/shared/types";
+import type { ActivityEntry, Card, View } from "../../src/shared/types";
 
 const screens = [
   { width: 1366, height: 768 },
@@ -727,6 +727,201 @@ async function denseGame(
   await page.addScriptTag({ content: script });
   await expect(page.locator(".game")).toBeVisible();
   await settled(page);
+}
+for (const viewport of [
+  { width: 390, height: 844 },
+  { width: 320, height: 568 },
+]) {
+  test(`visual activity keeps played card faces and historical effects readable at ${viewport.width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    const action = (
+      id: number,
+      event: ActivityEntry["event"],
+      extra: Partial<ActivityEntry> = {},
+    ): ActivityEntry => ({
+      id,
+      event,
+      color: "red",
+      turn: 0,
+      penalty: 0,
+      previousPenalty: 0,
+      roulette: false,
+      winner: null,
+      reason: "",
+      ...extra,
+    });
+    const base = {
+      drawn: [0, 0],
+      swapped: false,
+      discarded: 1,
+      declaredUno: false,
+    };
+    const activity: ActivityEntry[] = [
+      action(
+        1,
+        {
+          ...base,
+          id: 1,
+          action: "play",
+          actor: 1,
+          card: { id: "history-skip", color: "red", kind: "skip" },
+        },
+        { turn: 1 },
+      ),
+      action(
+        2,
+        {
+          ...base,
+          id: 2,
+          action: "play",
+          actor: 0,
+          card: { id: "history-wild", color: null, kind: "wild4" },
+        },
+        { color: "blue", turn: 1, penalty: 12, previousPenalty: 8 },
+      ),
+      action(
+        3,
+        {
+          ...base,
+          id: 3,
+          action: "challenge",
+          actor: 1,
+          drawn: [0, 14],
+          discarded: 0,
+          challengeWon: false,
+        },
+        { previousPenalty: 12 },
+      ),
+      action(4, {
+        ...base,
+        id: 4,
+        action: "draw",
+        actor: 0,
+        drawn: [3, 0],
+        discarded: 0,
+      }),
+    ];
+    const view: View = {
+      ...denseSnapshot(7),
+      activity,
+      penalty: 0,
+      lastPenalty: 0,
+      challenge: false,
+      debugRounds: [
+        {
+          roundId: "viewport-round",
+          round: 1,
+          startedAt: "2026-11-13T00:00:00Z",
+          finishedAt: null,
+          entryCount: 5,
+          complete: true,
+        },
+      ],
+    };
+    await denseGame(page, view);
+    await page.locator(".activity summary").click();
+    await expect(page.locator(".activity-entry")).toHaveCount(4);
+    expect(
+      await page
+        .locator(".activity-entry")
+        .evaluateAll((rows) =>
+          rows.map((row) => row.getAttribute("data-activity-id")),
+        ),
+    ).toEqual(["4", "3", "2", "1"]);
+    const row = (id: number) =>
+      page.locator(`.activity-entry[data-activity-id="${id}"]`);
+    await expect(row(1).locator(".activity-title")).toContainText(
+      view.players[1].name,
+    );
+    await expect(row(1).locator(".activity-effect")).toContainText("再出一张");
+    await expect(row(2).locator(".activity-effect")).toContainText("12");
+    await expect(row(2).locator(".activity-effect")).toContainText("蓝色");
+    await expect(row(3).locator(".activity-effect")).toContainText("14");
+    await expect(row(4)).toContainText("3");
+    for (const id of [3, 4]) {
+      await expect(row(id).locator(".card-art")).toHaveCount(0);
+      await expect(row(id).locator(".activity-glyph")).toHaveCount(1);
+    }
+    await expect(
+      page.locator(".activity-entry button, .activity-entry [data-card]"),
+    ).toHaveCount(0);
+    for (const id of [1, 2]) {
+      const card = row(id).locator(".activity-card .uno-card");
+      await card.scrollIntoViewIfNeeded();
+      await expect(card).toBeVisible();
+      await expect(card.locator(".card-art")).toHaveCount(1);
+      const fits = await row(id).evaluate((node) => {
+        const bounds = node.getBoundingClientRect();
+        const card = node.querySelector(".uno-card")!.getBoundingClientRect();
+        const art = node.querySelector(".card-art")!.getBoundingClientRect();
+        const lines = [
+          ...node.querySelectorAll(".activity-title, .activity-effect"),
+        ].flatMap((text) => {
+          const range = document.createRange();
+          range.selectNodeContents(text);
+          return [...range.getClientRects()];
+        });
+        return (
+          card.width >= 28 &&
+          card.height >= 42 &&
+          Math.abs(card.width - art.width) <= 1 &&
+          Math.abs(card.height - art.height) <= 1 &&
+          card.left >= bounds.left - 1 &&
+          card.right <= bounds.right + 1 &&
+          lines.every(
+            (line) =>
+              line.left >= bounds.left - 1 && line.right <= bounds.right + 1,
+          )
+        );
+      });
+      expect(
+        fits,
+        "miniature cards and wrapped text fit their activity row",
+      ).toBe(true);
+    }
+    await page.screenshot({ path: `/tmp/uno-activity-${viewport.width}.png` });
+    await page.locator("#export-debug").scrollIntoViewIfNeeded();
+    await expect(page.locator("#export-debug")).toBeVisible();
+    await expect(page.locator("#debug-round")).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.evaluate((next) => (window as any).__setViewportState(next), {
+      ...view,
+      revision: view.revision + 1,
+      penalty: 20,
+    });
+    await expect(row(2).locator(".activity-effect")).toContainText("12");
+    await expect(row(2).locator(".activity-effect")).not.toContainText("20");
+    // The collapsed summary must use the actual Mercy draw count too.
+    await page.evaluate((next) => (window as any).__setViewportState(next), {
+      ...view,
+      revision: view.revision + 2,
+      log: ["质疑失败：罚抽 14 张，跳过回合。"],
+      activity: [
+        ...activity,
+        action(
+          5,
+          {
+            ...base,
+            id: 5,
+            action: "challenge",
+            actor: 0,
+            drawn: [11, 0],
+            discarded: 0,
+            challengeWon: false,
+          },
+          { previousPenalty: 12, winner: 1 },
+        ),
+      ],
+    });
+    await expect(page.locator(".activity summary")).toContainText("实际抽 11 张");
+    await expect(page.locator(".activity summary")).not.toContainText("14 张");
+  });
 }
 for (const viewport of [
   { width: 390, height: 844 },

@@ -46,6 +46,16 @@ test("manual pause blocks play and only initiator can resume", () => {
 });
 test("disconnect pauses; same credential reconnects within 60 seconds", () => {
   const { rooms, host, views, time } = setup();
+  const g = rooms.rooms.get(host.room)!.game!;
+  g.hands[0] = [
+    { id: "public-skip", kind: "skip", color: g.color },
+    { id: "private-kept", kind: "number", color: g.color, value: 3 },
+  ];
+  rooms.update("a", views.get("a")!.revision, {
+    type: "play",
+    cardId: "public-skip",
+  });
+  const activity = structuredClone(views.get("a")!.activity);
   const ids = views.get("a")!.hand.map((c) => c.id);
   rooms.disconnect("a");
   assert.equal(views.get("b")!.disconnected, true);
@@ -57,6 +67,13 @@ test("disconnect pauses; same credential reconnects within 60 seconds", () => {
     views.get("a2")!.hand.map((c) => c.id),
     ids,
   );
+  assert.deepEqual(views.get("a2")!.activity, activity);
+  assert.deepEqual(views.get("b")!.activity, activity);
+  assert.equal(
+    views.get("a2")!.activity!.at(-1)!.event!.card!.id,
+    "public-skip",
+  );
+  assert.equal(JSON.stringify(views.get("b")).includes("private-kept"), false);
   assert.throws(() => rooms.join(host.room, "a3", "Alice", host.token));
 });
 test("reconnect does not clear manual pause", () => {
@@ -130,6 +147,8 @@ test("both must vote to rematch; new deck; stale actions rejected", () => {
   assert.throws(() => rooms.update("b", 0, { type: "rematch" }));
   rooms.update("b", views.get("b")!.revision, { type: "rematch" });
   assert.notEqual(r.game, old);
+  assert.equal(views.get("a")!.activity!.length, 1);
+  assert.equal(views.get("a")!.activity![0].event, null);
   assert.equal(r.game!.winner, null);
   assert.equal(r.game!.turn, 1);
   assert.deepEqual(
