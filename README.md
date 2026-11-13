@@ -12,6 +12,17 @@ TypeScript 实时双人 MVP。创建房间后复制链接，第二位玩家加�
 
 要求 Node.js 22.12+（本环境验证为 Node 24）。
 
+使用 mise 时，项目的 `mise.toml` 选择 Node.js 24。在项目目录执行：
+
+```sh
+mise install node@24
+mise exec node@24 -- node scripts/start-local.mjs
+```
+
+若提示配置未信任，检查 `mise.toml` 后执行 `mise trust ./mise.toml`。`start-local.sh` / `start-local.cmd` 在系统 Node 缺失或过旧时也会尝试使用 PATH 中的 mise。
+
+已安装合适版本 Node 时，开发模式：
+
 ```sh
 npm ci
 npm run dev
@@ -43,7 +54,7 @@ npm start
 - 牌桌保留最近操作的文字说明、罚抽累计和回合提示。操作等待服务器确认后才展示结果；展示期间禁止重复出牌。
 - 暂停、断线、离开及切后台会取消旧动效并同步最新状态；遵循系统「减少动态效果」偏好。
 
-最新本机运行包为 **0.5.0 一屏对局版**。先关闭旧版游戏窗口，再将新版解压到新文件夹，按 `本机开始游戏.md` 启动。
+最新本机运行包为 **0.5.1 mise 启动修复版**。先关闭旧版游戏窗口，再将新版解压到新文件夹，按 `本机开始游戏.md` 启动。
 
 ## 已确认的规则调整
 

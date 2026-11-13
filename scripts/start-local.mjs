@@ -7,7 +7,9 @@ import { resolve } from 'node:path';
 process.chdir(fileURLToPath(new URL('..', import.meta.url)));
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major < 22 || (major === 22 && minor < 12)) {
-  console.error('需要 Node.js 22.12 或更新版本。请先从 https://nodejs.org 安装 LTS 版本。');
+  console.error(`当前 Node.js ${process.versions.node}，需要 22.12 或更新版本。`);
+  console.error('可以执行 mise install node@24，然后执行 mise exec node@24 -- node scripts/start-local.mjs。');
+  console.error('也可以从 https://nodejs.org 安装 Node.js LTS，再重新打开终端。');
   process.exit(1);
 }
 const port = Number(process.env.PORT || 3000);
