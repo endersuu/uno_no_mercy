@@ -126,12 +126,15 @@ function announce(message: Feedback) {
   document.querySelector("#game-announcement")!.textContent =
     `${message.title}。${message.detail}`;
 }
-function applyImmediately(v: View | null) {
+function applyImmediately(
+  v: View | null,
+  audio: "cancel" | "preserve" = "cancel",
+) {
   generation++;
   motionAbort.abort();
   motionAbort = new AbortController();
   cancelMotion();
-  gameAudio.cancelPending();
+  if (audio === "cancel") gameAudio.cancelPending();
   roundOpening = false;
   queue = [];
   presenting = false;
@@ -841,7 +844,9 @@ function syncViewport() {
     `${height}px`,
   );
   if (!changed) return;
-  if (presenting && latest) applyImmediately(latest);
+  // A keyboard/address-bar resize invalidates animation coordinates, not the
+  // accepted game event. Let its scheduled deal/landing sound finish normally.
+  if (presenting && latest) applyImmediately(latest, "preserve");
   else renderHand();
 }
 function queueViewportSync() {

@@ -87,6 +87,29 @@ for (const kind of ["skip", "reverse", "skipAll"] as const)
     play(g, 0, g.hands[0][0]);
     assert.equal(g.turn, 0);
   });
+test("blue skip can be followed by red skip in 1v1 and changes the active color", () => {
+  const g = fixture();
+  const blueSkip = c("skip", "blue"),
+    redSkip = c("skip", "red"),
+    redNumber = c("number", "red", 9),
+    blueNumber = c("number", "blue", 9);
+  g.discard = [c("number", "blue", 5)];
+  g.color = "blue";
+  g.hands[0] = [blueSkip, redSkip, redNumber, blueNumber];
+
+  play(g, 0, blueSkip);
+  assert.equal(g.turn, 0);
+  assert.equal(g.color, "blue");
+  assert.equal(playable(g, redSkip), true);
+  play(g, 0, redSkip);
+  assert.equal(g.turn, 0);
+  assert.equal(g.color, "red");
+  assert.equal(g.discard.at(-1)?.id, redSkip.id);
+  assert.equal(playable(g, redNumber), true);
+  assert.equal(playable(g, blueNumber), false);
+  play(g, 0, redNumber);
+  assert.equal(g.turn, 1);
+});
 for (const n of [0, 7])
   test(`${n} swaps both hands`, () => {
     const g = fixture();
