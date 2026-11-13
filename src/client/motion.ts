@@ -38,7 +38,7 @@ export function describeEvent(v: View): Feedback {
     const penalized = e.challengeWon ? 1 - e.actor : e.actor;
     const who = penalized === v.me ? "你" : v.players[penalized].name;
     detail = e.challengeWon
-      ? `${who}罚抽 ${e.drawn[penalized]} 张；${v.penalty ? `质疑者继续处理此前的 +${v.penalty}。` : "质疑者继续出牌。"}`
+      ? `${who}承担全部累计罚抽，已抽 ${e.drawn[penalized]} 张；质疑者无需抽牌，罚抽已清零。${v.phase === "finished" ? "本局结束。" : "质疑者继续出牌。"}`
       : `${who}罚抽 ${e.drawn[penalized]} 张，已包含额外 2 张，跳过回合。`;
     tone = e.challengeWon ? "success" : "attack";
   } else if (e.action === "uno") {

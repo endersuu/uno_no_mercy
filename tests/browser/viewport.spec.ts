@@ -32,6 +32,8 @@ async function assertBoardFits(page: Page) {
       ".table-info",
       ".hand-heading",
       ".play-controls",
+      ".challenge-outcomes",
+      ".challenge-outcomes span",
       "#pause",
       "#draw",
       "#auto-uno",
@@ -725,6 +727,69 @@ async function denseGame(
   await page.addScriptTag({ content: script });
   await expect(page.locator(".game")).toBeVisible();
   await settled(page);
+}
+for (const viewport of [
+  { width: 390, height: 844 },
+  { width: 320, height: 568 },
+]) {
+  test(`stacked challenge previews show the full penalty and fit ${viewport.width}px phones`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    let view = { ...denseSnapshot(7), penalty: 6 };
+    await denseGame(page, view);
+    for (const penalty of [6, 12]) {
+      view = { ...view, revision: view.revision + 1, penalty };
+      await page.evaluate((next) => {
+        (window as any).__setViewportState(next);
+      }, view);
+      const outcomes = page.locator("#challenge-outcomes");
+      await expect(outcomes.locator("span").nth(0)).toHaveText(
+        `成功：对手抽 ${penalty} 张，你抽 0 张`,
+      );
+      await expect(outcomes.locator("span").nth(1)).toHaveText(
+        `失败：你抽 ${penalty + 2} 张`,
+      );
+      await expect(page.locator("#draw")).toHaveText(`接受 +${penalty} 张 ↓`);
+      await expect(page.locator("#challenge")).toHaveAttribute(
+        "aria-describedby",
+        "challenge-outcomes",
+      );
+      await assertBoardFits(page);
+      const layout = await page.locator(".play-controls").evaluate((node) => {
+        const controls = node.getBoundingClientRect();
+        const hints = [
+          ...node.querySelectorAll<HTMLElement>(".challenge-outcomes span"),
+        ];
+        const actions = [
+          ...node.querySelectorAll<HTMLElement>("button, .check-label"),
+        ].map((action) => action.getBoundingClientRect());
+        return hints.every((hint) => {
+          const box = hint.getBoundingClientRect();
+          return (
+            box.left >= controls.left - 1 &&
+            box.right <= controls.right + 1 &&
+            hint.scrollWidth <= hint.clientWidth + 1 &&
+            actions.every((action) => box.bottom <= action.top + 1)
+          );
+        });
+      });
+      expect(layout, "challenge outcomes fit above the action buttons").toBe(
+        true,
+      );
+    }
+    await page.screenshot({ path: `/tmp/uno-challenge-${viewport.width}.png` });
+    for (const next of [
+      { ...view, revision: view.revision + 1, turn: 1 as const },
+      { ...view, revision: view.revision + 2, challenge: false },
+    ]) {
+      await page.evaluate((next) => {
+        (window as any).__setViewportState(next);
+      }, next);
+      await expect(page.locator("#challenge-outcomes")).toHaveCount(0);
+      await expect(page.locator("#challenge")).toHaveCount(0);
+    }
+  });
 }
 test("number and action card faces remain visible on either turn after phone rotation and pinch zoom", async ({
   page,

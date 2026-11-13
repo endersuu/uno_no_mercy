@@ -183,31 +183,49 @@ test("skip has an explicit visible effect and a distinct effect sound timing cal
   await expect.poll(() => page.evaluate(() => (window as any).effects)).toBe(1);
   await completed(page);
 });
-test("challenge result remains visible while the penalty cards move", async ({
-  page,
-}) => {
-  const previous = snapshot([card("held", "number", 5)]);
-  const next: View = {
-    ...previous,
-    event: {
-      id: 1,
-      action: "challenge",
-      actor: 0,
-      drawn: [6, 0],
-      swapped: false,
-      discarded: 0,
-      declaredUno: false,
-      challengeWon: false,
-    },
-  };
-  await harness(page, previous);
-  await startTransition(page, previous, next);
-  await expect(page.locator(".flying-card").first()).toBeVisible();
-  await expect(page.locator(".game-effect")).toHaveCount(1);
-  await expect(page.locator(".game-effect")).toContainText("质疑失败");
-  await expect(page.locator(".game-effect")).toContainText("6");
-  await completed(page);
-});
+for (const challengeWon of [true, false]) {
+  test(`12-card stack challenge ${challengeWon ? "success" : "failure"} displays the full settlement while cards move`, async ({
+    page,
+  }) => {
+    const previous = {
+      ...snapshot([card("held", "number", 5)]),
+      penalty: 12,
+      lastPenalty: 4,
+      challenge: true,
+    };
+    const next: View = {
+      ...previous,
+      penalty: 0,
+      lastPenalty: 0,
+      challenge: false,
+      turn: challengeWon ? 0 : 1,
+      event: {
+        id: 1,
+        action: "challenge",
+        actor: 0,
+        drawn: challengeWon ? [0, 12] : [14, 0],
+        swapped: false,
+        discarded: 0,
+        declaredUno: false,
+        challengeWon,
+      },
+    };
+    await harness(page, previous);
+    await startTransition(page, previous, next);
+    await expect(page.locator(".flying-card").first()).toBeVisible();
+    await expect(page.locator(".game-effect")).toHaveCount(1);
+    await expect(page.locator(".game-effect")).toContainText(
+      challengeWon ? "质疑成功" : "质疑失败",
+    );
+    await expect(page.locator(".game-effect")).toContainText(
+      challengeWon ? "对方承担全部累计罚抽，已抽 12 张" : "你罚抽 14 张",
+    );
+    await expect(page.locator(".game-effect")).toContainText(
+      challengeWon ? "质疑者无需抽牌，罚抽已清零" : "已包含额外 2 张，跳过回合",
+    );
+    await completed(page);
+  });
+}
 test("swap shows a visible exchange and cancels cleanly mid-effect", async ({
   page,
 }) => {

@@ -21,8 +21,6 @@ export interface Game {
   challenge: null | {
     offender: number;
     illegal: boolean;
-    previous: number;
-    previousLast: number;
   };
   roulette: boolean;
   winner: number | null;
@@ -188,19 +186,20 @@ function applyAction(g: Game, p: number, a: Action): void {
     const c = g.challenge;
     if (!c) throw Error("当前不能质疑。");
     g.vulnerable[1 - p] = false;
+    const total = g.penalty;
     g.challenge = null;
+    // A challenge settles the entire stack, regardless of its outcome.
+    g.penalty = 0;
+    g.lastPenalty = 0;
     if (c.illegal) {
-      takeMany(g, c.offender, 4);
-      if (g.winner === null) {
-        g.penalty = c.previous;
-        g.lastPenalty = c.previousLast;
-      }
-      note(g, "质疑成功：出牌者仍有原颜色牌，罚抽 4 张。你的回合继续。");
+      takeMany(g, c.offender, total);
+      note(
+        g,
+        `质疑成功：出牌者仍有原颜色牌，承担全部累计罚抽 ${total} 张。你无需抽牌，罚抽已清零。${g.winner === null ? "你的回合继续。" : "本局结束。"}`,
+      );
     } else {
-      const n = g.penalty + 2;
+      const n = total + 2;
       takeMany(g, p, n);
-      g.penalty = 0;
-      g.lastPenalty = 0;
       g.turn = 1 - p;
       note(g, `质疑失败：罚抽 ${n} 张，跳过回合。`);
     }
@@ -270,8 +269,7 @@ function applyAction(g: Game, p: number, a: Action): void {
   const illegal = g.hands[p].some(
     (c) => c.id !== card.id && c.color === g.color,
   );
-  const previous = g.penalty,
-    previousLast = g.lastPenalty;
+  const previous = g.penalty;
   g.vulnerable[1 - p] = false;
   g.challenge = null;
   g.hands[p] = g.hands[p].filter((c) => c.id !== card.id);
@@ -307,8 +305,7 @@ function applyAction(g: Game, p: number, a: Action): void {
   if (amount(card)) {
     g.penalty = previous + amount(card);
     g.lastPenalty = amount(card);
-    if (amount(card) === 4)
-      g.challenge = { offender: p, illegal, previous, previousLast };
+    if (amount(card) === 4) g.challenge = { offender: p, illegal };
   }
   if (card.kind === "roulette") g.roulette = true;
 }

@@ -172,15 +172,23 @@ test("failed +4 challenge draws 6 and skips", () => {
   assert.equal(g.hands[1].length, 8);
   assert.equal(g.turn, 0);
 });
-test("successful challenge on stacked +4 restores prior debt", () => {
+test("successful challenge on stacked +4 transfers and clears the whole debt", () => {
   const g = fixture();
   g.hands[0] = [c("draw2"), c("number", "blue", 1)];
   g.hands[1] = [c("draw4"), c("number", "red", 1)];
   play(g, 0, g.hands[0][0]);
   play(g, 1, g.hands[1][0]);
+  const counts = g.hands.map((hand) => hand.length);
   act(g, 0, { type: "challenge" });
-  assert.equal(g.penalty, 2);
-  assert.equal(g.lastPenalty, 2);
+  assert.deepEqual(
+    g.hands.map((hand) => hand.length),
+    [counts[0], counts[1] + 6],
+  );
+  assert.deepEqual(g.event?.drawn, [0, 6]);
+  assert.equal(g.event?.challengeWon, true);
+  assert.equal(g.challenge, null);
+  assert.equal(g.penalty, 0);
+  assert.equal(g.lastPenalty, 0);
   assert.equal(g.turn, 0);
 });
 test("failed stacked challenge draws total plus two", () => {
@@ -191,6 +199,95 @@ test("failed stacked challenge draws total plus two", () => {
   play(g, 1, g.hands[1][0]);
   act(g, 0, { type: "challenge" });
   assert.equal(g.hands[0].length, 9);
+  assert.deepEqual(g.event?.drawn, [8, 0]);
+  assert.equal(g.event?.challengeWon, false);
+  assert.equal(g.penalty, 0);
+  assert.equal(g.lastPenalty, 0);
+  assert.equal(g.challenge, null);
+  assert.equal(g.turn, 1);
+});
+
+function stackedTwelve(kind: "draw4" | "wild4", illegal = true): Game {
+  const g = fixture();
+  const first = c("draw4", "red"),
+    second = c("draw4", "green"),
+    last = c(kind, kind === "wild4" ? null : "blue");
+  g.turn = 1;
+  g.hands = [
+    [second, c("number", "blue", 9), c("number", "yellow", 8)],
+    [first, last, c("number", illegal ? "green" : "yellow", 1)],
+  ];
+  play(g, 1, first);
+  play(g, 0, second);
+  play(g, 1, last);
+  assert.equal(g.penalty, 12);
+  assert.equal(g.lastPenalty, 4);
+  assert.equal(g.turn, 0);
+  assert.equal(g.challenge?.illegal, illegal);
+  return g;
+}
+
+for (const kind of ["draw4", "wild4"] as const) {
+  test(`${kind}: challenging a 12-card stack successfully draws 0 for A and 12 for B`, () => {
+    const g = stackedTwelve(kind);
+    const before = g.hands.map((hand) => [...hand]);
+    const color = g.color;
+    act(g, 0, { type: "challenge" });
+    assert.deepEqual(g.hands[0], before[0]);
+    assert.equal(g.hands[1].length, before[1].length + 12);
+    assert.deepEqual(g.event?.drawn, [0, 12]);
+    assert.equal(g.event?.challengeWon, true);
+    assert.equal(g.penalty, 0);
+    assert.equal(g.lastPenalty, 0);
+    assert.equal(g.challenge, null);
+    assert.equal(g.turn, 0);
+    assert.equal(g.color, color);
+    assert.match(g.log.at(-1)!, /全部累计罚抽 12 张/);
+    assert.throws(() => act(g, 0, { type: "challenge" }), /当前不能质疑/);
+    // A can immediately play an ordinary matching card; no old +8 remains.
+    assert.equal(playable(g, g.hands[0][0]), true);
+    play(g, 0, g.hands[0][0]);
+    assert.equal(g.turn, 1);
+    assert.equal(g.penalty, 0);
+  });
+  test(`${kind}: losing a challenge to a 12-card stack draws 14 for A and 0 for B`, () => {
+    const g = stackedTwelve(kind, false);
+    const before = g.hands.map((hand) => [...hand]);
+    act(g, 0, { type: "challenge" });
+    assert.equal(g.hands[0].length, before[0].length + 14);
+    assert.deepEqual(g.hands[1], before[1]);
+    assert.deepEqual(g.event?.drawn, [14, 0]);
+    assert.equal(g.event?.challengeWon, false);
+    assert.equal(g.penalty, 0);
+    assert.equal(g.lastPenalty, 0);
+    assert.equal(g.challenge, null);
+    assert.equal(g.turn, 1);
+  });
+  test(`${kind}: accepting a 12-card stack draws 12 for A without a challenge surcharge`, () => {
+    const g = stackedTwelve(kind);
+    const before = g.hands.map((hand) => [...hand]);
+    act(g, 0, { type: "draw" });
+    assert.equal(g.hands[0].length, before[0].length + 12);
+    assert.deepEqual(g.hands[1], before[1]);
+    assert.deepEqual(g.event?.drawn, [12, 0]);
+    assert.equal(g.penalty, 0);
+    assert.equal(g.lastPenalty, 0);
+    assert.equal(g.challenge, null);
+    assert.equal(g.turn, 1);
+  });
+}
+test("a successful whole-stack challenge still observes mercy and clears all debt", () => {
+  const g = stackedTwelve("draw4");
+  while (g.hands[1].length < 14) g.hands[1].push(c("number", "green", 2));
+  const challenger = [...g.hands[0]];
+  act(g, 0, { type: "challenge" });
+  assert.equal(g.winner, 0);
+  assert.equal(g.hands[1].length, 25);
+  assert.deepEqual(g.hands[0], challenger);
+  assert.deepEqual(g.event?.drawn, [0, 11]);
+  assert.equal(g.penalty, 0);
+  assert.equal(g.lastPenalty, 0);
+  assert.equal(g.challenge, null);
 });
 test("wilds require valid selected colors before mutation", () => {
   const g = fixture();
