@@ -1,7 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { act, deck, newGame, playable, type Game } from "../src/server/game.js";
+import {
+  act,
+  deck,
+  newGame,
+  playable,
+  stackable,
+  type Game,
+} from "../src/server/game.js";
 import type { Card, Color, Kind } from "../src/shared/types.js";
 const c = (
   kind: Kind = "number",
@@ -156,6 +163,25 @@ test("stacking ignores color, requires equal or greater value, and skips on acce
   assert.equal(g.turn, 1);
   assert.equal(g.penalty, 0);
 });
+test("stackable requires an active penalty and accepts equal or greater draws of any color", () => {
+  const g = fixture();
+  const equal = c("draw4", "blue");
+  assert.equal(stackable(g, equal), false);
+  g.penalty = 6;
+  g.lastPenalty = 4;
+  assert.equal(stackable(g, equal), true);
+  assert.equal(stackable(g, c("draw4", "red")), true);
+  assert.equal(stackable(g, c("wild4", null)), true);
+  assert.equal(stackable(g, c("wild6", null)), true);
+  assert.equal(stackable(g, c("wild10", null)), true);
+  assert.equal(stackable(g, c("draw2", "red")), false);
+  assert.equal(stackable(g, c("number", "red", 1)), false);
+  g.roulette = true;
+  assert.equal(stackable(g, equal), false);
+  g.roulette = false;
+  g.winner = 0;
+  assert.equal(stackable(g, equal), false);
+});
 for (const kind of ["draw4", "wild4"] as const)
   test(`${kind}: successful challenge penalizes offender and preserves turn`, () => {
     const g = fixture();
@@ -181,7 +207,7 @@ test("failed +4 challenge draws 6 and skips", () => {
 test("successful challenge on stacked +4 transfers and clears the whole debt", () => {
   const g = fixture();
   g.hands[0] = [c("draw2"), c("number", "blue", 1)];
-  g.hands[1] = [c("draw4"), c("number", "red", 1)];
+  g.hands[1] = [c("draw4"), c("draw2", "red")];
   play(g, 0, g.hands[0][0]);
   play(g, 1, g.hands[1][0]);
   const counts = g.hands.map((hand) => hand.length);
@@ -213,6 +239,84 @@ test("failed stacked challenge draws total plus two", () => {
   assert.equal(g.turn, 1);
 });
 
+for (const kind of ["draw4", "wild4"] as const) {
+  for (const scenario of [
+    {
+      name: "does not count the played card itself",
+      penalty: 0,
+      alternative: () => c("number", "blue", 1),
+      illegal: false,
+    },
+    {
+      name: "counts a same-color +2 when responding to +2",
+      penalty: 2,
+      alternative: () => c("draw2", "red"),
+      illegal: true,
+    },
+    {
+      name: "ignores a same-color number when responding to +4",
+      penalty: 4,
+      alternative: () => c("number", "red", 1),
+      illegal: false,
+    },
+    {
+      name: "ignores a same-color +2 when responding to +4",
+      penalty: 4,
+      alternative: () => c("draw2", "red"),
+      illegal: false,
+    },
+    {
+      name: "counts a playable +4 of the original color",
+      penalty: 4,
+      alternative: () => c("draw4", "red"),
+      illegal: true,
+    },
+    {
+      name: "ignores a playable +4 of the new color",
+      penalty: 4,
+      alternative: () => c("draw4", "blue"),
+      illegal: false,
+    },
+    {
+      name: "ignores a playable wild card",
+      penalty: 4,
+      alternative: () => c("wild6", null),
+      illegal: false,
+    },
+  ]) {
+    test(`${kind}: challenge ${scenario.name}`, () => {
+      const g = fixture();
+      const card = c(
+        kind,
+        kind === "wild4" ? null : scenario.penalty ? "blue" : "red",
+      );
+      g.hands[0] = [card, scenario.alternative()];
+      if (scenario.penalty) {
+        const first = c(scenario.penalty === 2 ? "draw2" : "draw4", "red");
+        g.hands[1] = [first, c("number", "yellow", 8)];
+        g.turn = 1;
+        play(g, 1, first);
+      }
+      play(g, 0, card);
+      assert.deepEqual(g.challenge, { offender: 0, illegal: scenario.illegal });
+      const counts = g.hands.map((hand) => hand.length);
+      const penalty = scenario.penalty + 4;
+      act(g, 1, { type: "challenge" });
+      assert.deepEqual(
+        g.hands.map((hand) => hand.length),
+        scenario.illegal
+          ? [counts[0] + penalty, counts[1]]
+          : [counts[0], counts[1] + penalty + 2],
+      );
+      assert.equal(g.event?.challengeWon, scenario.illegal);
+      assert.equal(g.turn, scenario.illegal ? 1 : 0);
+      assert.equal(g.penalty, 0);
+      assert.equal(g.lastPenalty, 0);
+      assert.equal(g.challenge, null);
+    });
+  }
+}
+
 function stackedTwelve(kind: "draw4" | "wild4", illegal = true): Game {
   const g = fixture();
   const first = c("draw4", "red"),
@@ -221,7 +325,7 @@ function stackedTwelve(kind: "draw4" | "wild4", illegal = true): Game {
   g.turn = 1;
   g.hands = [
     [second, c("number", "blue", 9), c("number", "yellow", 8)],
-    [first, last, c("number", illegal ? "green" : "yellow", 1)],
+    [first, last, c("draw4", illegal ? "green" : "yellow")],
   ];
   play(g, 1, first);
   play(g, 0, second);
@@ -441,7 +545,7 @@ test("public activity preserves the played faces and the resolved state of each 
     second = c("draw4");
   g.hands = [
     [first, c("number", "blue", 9)],
-    [second, c("number", "red", 1)],
+    [second, c("draw2", "red")],
   ];
   play(g, 0, first);
   const firstEntry = structuredClone(g.activity.at(-1)!);

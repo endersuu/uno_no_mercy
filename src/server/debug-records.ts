@@ -53,7 +53,7 @@ export class DebugRecords {
       server: {
         appVersion: process.env.npm_package_version ?? "0.8.1",
         commit: process.env.RENDER_GIT_COMMIT ?? null,
-        rulesVersion: "no-mercy-house-stack-challenge-v1",
+        rulesVersion: "no-mercy-house-stack-challenge-v2",
       },
     };
     const first: DebugEntry = {
