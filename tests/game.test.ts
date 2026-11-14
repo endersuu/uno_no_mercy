@@ -239,6 +239,81 @@ test("failed stacked challenge draws total plus two", () => {
   assert.equal(g.turn, 1);
 });
 
+for (const scenario of [
+  {
+    name: "red 2: playing one of two red +4 cards is challengeable as illegal",
+    hand: () => [c("draw4", "red"), c("draw4", "red")],
+    playIndex: 0,
+    illegal: true,
+  },
+  {
+    name: "red 2: playing wild +4 while holding red +4 is challengeable as illegal",
+    hand: () => [c("draw4", "red"), c("wild4", null)],
+    playIndex: 1,
+    illegal: true,
+  },
+  {
+    name: "red 2: playing red +4 while holding only wild +4 is legal",
+    hand: () => [c("draw4", "red"), c("wild4", null)],
+    playIndex: 0,
+    illegal: false,
+  },
+]) {
+  test(scenario.name, () => {
+    const g = fixture();
+    g.discard = [c("number", "red", 2)];
+    g.hands[0] = scenario.hand();
+
+    play(g, 0, g.hands[0][scenario.playIndex]);
+
+    assert.deepEqual(g.challenge, { offender: 0, illegal: scenario.illegal });
+    assert.equal(g.hands[0].length, 1);
+    assert.equal(g.penalty, 4);
+    act(g, 1, { type: "challenge" });
+    assert.equal(g.event?.challengeWon, scenario.illegal);
+    assert.deepEqual(g.event?.drawn, scenario.illegal ? [4, 0] : [0, 6]);
+    assert.equal(g.turn, scenario.illegal ? 1 : 0);
+    assert.equal(g.penalty, 0);
+    assert.equal(g.lastPenalty, 0);
+    assert.equal(g.challenge, null);
+  });
+}
+
+for (const pending of [true, false]) {
+  test(`red +2 ${pending ? "pending" : "settled"}: wild +4 with a red number 4 is ${pending ? "legal" : "illegal"}`, () => {
+    const g = fixture();
+    const redFour = c("number", "red", 4);
+    const wildFour = c("wild4", null);
+    const drawTwo = c("draw2", "red");
+    g.hands[0] = [redFour, wildFour];
+    // A pending +2 comes from the opponent; a settled +2 was accepted by them.
+    const opener = pending ? 1 : 0;
+    g.turn = opener;
+    g.hands[opener].unshift(drawTwo);
+    play(g, opener, drawTwo);
+    if (!pending) act(g, 1, { type: "draw" });
+
+    assert.equal(g.turn, 0);
+    assert.equal(g.discard.at(-1)?.id, drawTwo.id);
+    assert.equal(g.color, "red");
+    assert.equal(g.penalty, pending ? 2 : 0);
+    assert.equal(g.lastPenalty, pending ? 2 : 0);
+    assert.deepEqual(g.hands[0], [redFour, wildFour]);
+
+    play(g, 0, wildFour);
+
+    assert.deepEqual(g.challenge, { offender: 0, illegal: !pending });
+    assert.equal(g.penalty, pending ? 6 : 4);
+    act(g, 1, { type: "challenge" });
+    assert.equal(g.event?.challengeWon, !pending);
+    assert.deepEqual(g.event?.drawn, pending ? [0, 8] : [4, 0]);
+    assert.equal(g.turn, pending ? 0 : 1);
+    assert.equal(g.penalty, 0);
+    assert.equal(g.lastPenalty, 0);
+    assert.equal(g.challenge, null);
+  });
+}
+
 for (const kind of ["draw4", "wild4"] as const) {
   for (const scenario of [
     {
