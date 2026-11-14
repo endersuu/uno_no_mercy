@@ -9,6 +9,10 @@ import {
   type Color,
   type GameEvent,
 } from "../shared/types.js";
+const CHALLENGEABLE_KINDS: ReadonlySet<Card["kind"]> = new Set([
+  "draw4",
+  "wild4",
+]);
 export interface Game {
   roundId: string;
   event: GameEvent | null;
@@ -350,7 +354,8 @@ function applyAction(g: Game, p: number, a: Action): void {
   if (amount(card)) {
     g.penalty = previous + amount(card);
     g.lastPenalty = amount(card);
-    if (amount(card) === 4) g.challenge = { offender: p, illegal };
+    if (CHALLENGEABLE_KINDS.has(card.kind))
+      g.challenge = { offender: p, illegal };
   }
   if (card.kind === "roulette") g.roulette = true;
 }
