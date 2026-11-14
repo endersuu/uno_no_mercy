@@ -1,6 +1,7 @@
 import { io } from "socket.io-client";
 import {
   COLORS,
+  RECONNECT_GRACE_MS,
   colorNames,
   kindNames,
   type Card,
@@ -518,7 +519,7 @@ function home() {
   return `<main class="landing"><section class="intro"><span class="eyebrow"><i></i> TWO PLAYERS. ZERO MERCY.</span><h1>朋友局。<br><span>不留情。</span></h1><p class="intro-copy">一条链接，一位朋友。<br>把好运留在手里，把 +10 送给对方。</p><div class="hero-cards" aria-hidden="true">${card({ id: "a", kind: "number", color: "green", value: 7 })}${card({ id: "b", kind: "wild10", color: null })}${card({ id: "c", kind: "draw4", color: "red" })}</div><div class="pills"><span>2 人实时对战</span><span>无需登录</span><span>168 张 · No Mercy</span></div></section><section class="entry-panel"><span class="eyebrow">${room ? "YOU’RE INVITED" : "THE TABLE IS YOURS"}</span><h2>${room ? "有位朋友，在等你。" : "开一桌，叫上朋友。"}</h2><p class="muted" ${recovery ? 'id="reconnect-status" role="status"' : ""}>${recovery ? "正在恢复原来的席位…等待旧连接断开，会自动重试。若同一房间还有其他页面，请先关闭。" : room ? "输入昵称，加入这场不留情的对决。" : "创建专属房间，把邀请链接发给 TA。"}</p><form id="entry"><label for="name">你的昵称 <span>可选</span></label><input id="name" name="name" maxlength="16" placeholder="今天怎么称呼你？" value="${esc(get("uno-name") ?? "")}" autocomplete="nickname"><button class="primary wide" type="submit" ${!online || busy || recovery ? "disabled" : ""}>${recovery ? "正在恢复席位…" : busy ? "正在进入…" : room ? "加入房间 →" : "创建房间 →"}</button></form><div class="entry-divider"></div><div class="entry-detail"><span>01</span><div><b>只有你们两个人</b><p>私密房间，分享链接即可入座</p></div></div><div class="entry-detail"><span>02</span><div><b>再来一局？双方说了算</b><p>不记分，不排名，只管享受对局</p></div></div>${room ? '<button class="text-button" id="new-room">创建自己的房间 ↗</button>' : '<p class="small-note">准备好接下那张 +10 了吗？</p>'}</section></main><section class="quick-rules"><div><span>01 / STACK IT</span><h3>罚抽，可以加倍。</h3><p>+2 → +4 → +6，谁接不住谁抽。</p></div><div><span>02 / SWITCH IT</span><h3>一张 7，局势反转。</h3><p>交换全部手牌，好牌也留不住。</p></div><div><span>03 / NO MERCY</span><h3>25 张，就此出局。</h3><p>别让手里的牌变成一座山。</p></div></section>`;
 }
 function waiting(v: View) {
-  return `<main class="waiting"><span class="eyebrow">ROOM / ${esc(v.room)}</span><h1>座位留好了。<br><span>就差你的朋友。</span></h1><p class="muted">${v.disconnected ? "对方暂时离线，保留席位等待重连。" : "对方打开链接加入后，游戏自动开始。"}</p>${v.disconnected ? '<p id="countdown" class="muted"></p>' : ""}<div class="waiting-seats"><div><span class="avatar">${esc(v.players[v.me].name[0])}</span><b>${esc(v.players[v.me].name)} <small>你</small></b><span class="ready-tag">已入座</span></div><span class="versus">VS</span><div><span class="avatar empty">＋</span><b>虚位以待</b><span class="muted">等一位够胆的朋友</span></div></div><div class="invite"><input aria-label="邀请链接" readonly value="${esc(location.href)}"><button class="primary" id="copy-link">复制邀请链接 ↗</button></div><p class="small-note">断线席位保留 60 秒 · 空房间自动销毁</p></main>`;
+  return `<main class="waiting"><span class="eyebrow">ROOM / ${esc(v.room)}</span><h1>座位留好了。<br><span>就差你的朋友。</span></h1><p class="muted">${v.disconnected ? "对方暂时离线，保留席位等待重连。" : "对方打开链接加入后，游戏自动开始。"}</p>${v.disconnected ? '<p id="countdown" class="muted"></p>' : ""}<div class="waiting-seats"><div><span class="avatar">${esc(v.players[v.me].name[0])}</span><b>${esc(v.players[v.me].name)} <small>你</small></b><span class="ready-tag">已入座</span></div><span class="versus">VS</span><div><span class="avatar empty">＋</span><b>虚位以待</b><span class="muted">等一位够胆的朋友</span></div></div><div class="invite"><input aria-label="邀请链接" readonly value="${esc(location.href)}"><button class="primary" id="copy-link">复制邀请链接 ↗</button></div><p class="small-note">断线席位保留 5 分钟 · 空房间自动销毁</p></main>`;
 }
 function debugControls(v: View) {
   const rounds = v.debugRounds ?? [];
@@ -784,7 +785,12 @@ async function enter(
   if (type === "join" && room && token) {
     if (recovery?.room !== room || recovery.token !== token) {
       cancelRecovery();
-      recovery = { room, token, name, until: Date.now() + 55_000 };
+      recovery = {
+        room,
+        token,
+        name,
+        until: Date.now() + RECONNECT_GRACE_MS - 5_000,
+      };
     }
     if (Date.now() >= recovery.until) {
       retryRecovery(recovery);
@@ -857,9 +863,19 @@ function countdown() {
   const deadlines = state.players
     .map((p) => p.deadline)
     .filter((d): d is number => d !== null);
-  el.textContent = deadlines.length
-    ? `等待重连 ${Math.max(0, Math.ceil((Math.min(...deadlines) - Date.now()) / 1000))} 秒`
-    : "等待连接恢复";
+  if (!deadlines.length) {
+    el.textContent = "等待连接恢复";
+    return;
+  }
+  const seconds = Math.max(
+    0,
+    Math.ceil((Math.min(...deadlines) - Date.now()) / 1000),
+  );
+  const remaining =
+    seconds >= 60
+      ? `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
+      : `${seconds} 秒`;
+  el.textContent = `等待重连 ${remaining}`;
 }
 setInterval(countdown, 500);
 document.querySelector("#rules-content")!.innerHTML = `

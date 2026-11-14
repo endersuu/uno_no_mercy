@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { act, newGame, playable, type Game } from "./game.js";
 import { DebugRecords } from "./debug-records.js";
-import { COLORS } from "../shared/types.js";
+import { COLORS, RECONNECT_GRACE_MS } from "../shared/types.js";
 import type {
   Card,
   DebugEntry,
@@ -33,7 +33,7 @@ export class Rooms {
   rooms = new Map<string, Room>();
   constructor(
     private emit: (socket: string, v: View) => void,
-    private grace = 60_000,
+    private grace = RECONNECT_GRACE_MS,
     private now = () => Date.now(),
     private debug = new DebugRecords(),
   ) {}
@@ -60,7 +60,7 @@ export class Rooms {
       const s = r.seats[old]!;
       if (s.deadline !== null && s.deadline <= this.now()) {
         this.expire();
-        throw Error("重连已超过一分钟。");
+        throw Error("重连已超过 5 分钟。");
       }
       if (s.socket && s.socket !== socket)
         throw Error("这个席位已在另一个页面连接。");
@@ -214,7 +214,7 @@ export class Rooms {
           s?.deadline !== undefined &&
           s.deadline <= this.now()
         )
-          this.remove(r, p, "对手断线超过一分钟，本局结束。", "expire");
+          this.remove(r, p, "对手断线超过 5 分钟，本局结束。", "expire");
       }
   }
   view(r: Room, p: number): View {

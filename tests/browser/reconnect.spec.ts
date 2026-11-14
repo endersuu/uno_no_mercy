@@ -81,7 +81,7 @@ async function seedSeat(context: BrowserContext, room: string, token: string) {
   );
 }
 
-test("a saved seat waits for its old connection, then restores the same hand automatically", async ({
+test("a saved seat keeps retrying beyond one minute, then restores the same hand when its old connection closes", async ({
   browser,
 }) => {
   const { ca, cb, a, b, room, token, url } = await pair(browser);
@@ -105,6 +105,7 @@ test("a saved seat waits for its old connection, then restores the same hand aut
       });
     });
     const restored = await replacement.newPage();
+    await restored.clock.install({ time: new Date() });
     const joins = observeJoins(restored);
     await restored.goto(url);
     await expect.poll(() => joins.occupied).toBeGreaterThan(0);
@@ -113,6 +114,17 @@ test("a saved seat waits for its old connection, then restores the same hand aut
     await expect(a.locator(".hand .card")).toHaveCount(7);
     await expect(b.locator(".pause-banner")).toHaveCount(0);
     await expect(restored.locator(".hand")).toHaveCount(0);
+
+    // A refresh can leave the old socket occupied for over a minute. Advance
+    // wall time only so the real transport's heartbeat timers remain valid.
+    const occupiedBeforeDelay = joins.occupied;
+    await restored.clock.setSystemTime(new Date(Date.now() + 65_000));
+    await expect
+      .poll(() => joins.occupied)
+      .toBeGreaterThan(occupiedBeforeDelay + 1);
+    await expect(restored.locator("#reconnect-status")).toBeVisible();
+    await expect(restored.locator(".hand")).toHaveCount(0);
+    await expect(a.locator(".hand .card")).toHaveCount(7);
 
     await ca.close();
     await expect(restored.locator(".hand .card")).toHaveCount(7, {
@@ -188,7 +200,7 @@ test("choosing a new room cancels a pending seat recovery", async ({
   }
 });
 
-test("seat recovery stops after its deadline without taking over a live player", async ({
+test("seat recovery stops after the five-minute window without taking over a live player", async ({
   browser,
 }) => {
   const { ca, cb, a, b, room, token, url } = await pair(browser);
@@ -202,7 +214,7 @@ test("seat recovery stops after its deadline without taking over a live player",
     await expect.poll(() => joins.occupied).toBeGreaterThan(0);
     await expect(page.locator("#reconnect-status")).toBeVisible();
     // Advance wall time without firing Socket.IO's heartbeat timers early.
-    await page.clock.setSystemTime(new Date(Date.now() + 56_000));
+    await page.clock.setSystemTime(new Date(Date.now() + 301_000));
     await expect(page.locator("#reconnect-status")).toHaveCount(0);
     await expect(page.locator("#toast")).toContainText("未能恢复席位");
     await expect(page.locator("#entry button")).toBeEnabled();

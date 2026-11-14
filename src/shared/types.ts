@@ -1,4 +1,5 @@
 export const COLORS = ["red", "yellow", "green", "blue"] as const;
+export const RECONNECT_GRACE_MS = 5 * 60_000;
 export type Color = (typeof COLORS)[number];
 export type Kind =
   | "number"

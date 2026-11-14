@@ -7,7 +7,7 @@ function setup() {
   const views = new Map<string, View>();
   const rooms = new Rooms(
     (id, v) => views.set(id, v),
-    60_000,
+    undefined,
     () => now,
   );
   const host = rooms.create("a", "Alice");
@@ -44,7 +44,7 @@ test("manual pause blocks play and only initiator can resume", () => {
   rooms.update("a", views.get("a")!.revision, { type: "resume" });
   assert.equal(views.get("a")!.pausedBy, null);
 });
-test("disconnect pauses; same credential reconnects within 60 seconds", () => {
+test("disconnect retains the original hand and history until just before five minutes", () => {
   const { rooms, host, views, time } = setup();
   const g = rooms.rooms.get(host.room)!.game!;
   g.hands[0] = [
@@ -59,8 +59,12 @@ test("disconnect pauses; same credential reconnects within 60 seconds", () => {
   const ids = views.get("a")!.hand.map((c) => c.id);
   rooms.disconnect("a");
   assert.equal(views.get("b")!.disconnected, true);
-  assert.equal(views.get("b")!.players[0].deadline, 60_000);
-  time(59_999);
+  assert.equal(views.get("b")!.players[0].deadline, 300_000);
+  time(240_000);
+  rooms.expire();
+  assert.equal(views.get("b")!.phase, "playing");
+  assert.equal(rooms.rooms.get(host.room)!.seats[0]!.token, host.token);
+  time(299_999);
   rooms.join(host.room, "a2", "Alice", host.token);
   assert.equal(views.get("b")!.disconnected, false);
   assert.deepEqual(
@@ -83,14 +87,27 @@ test("reconnect does not clear manual pause", () => {
   rooms.join(host.room, "a2", "Alice", host.token);
   assert.equal(views.get("b")!.pausedBy, 0);
 });
-test("60-second deadline ends game, late reconnect rejected", () => {
+test("the exact five-minute deadline ends the game and rejects a late reconnect", () => {
   const { rooms, host, views, time } = setup();
   rooms.disconnect("a");
-  time(60_000);
-  assert.throws(() => rooms.join(host.room, "a2", "Alice", host.token));
+  time(300_000);
+  assert.throws(
+    () => rooms.join(host.room, "a2", "Alice", host.token),
+    /重连已超过 5 分钟/,
+  );
   assert.equal(views.get("b")!.phase, "finished");
   assert.equal(views.get("b")!.winner, 1);
   assert.equal(views.get("b")!.closed, true);
+  assert.match(views.get("b")!.reason, /断线超过 5 分钟/);
+});
+test("connected players do not expire merely for being idle longer than five minutes", () => {
+  const { rooms, host, views, time } = setup();
+  time(360_000);
+  rooms.expire();
+  assert.equal(rooms.rooms.has(host.room), true);
+  assert.equal(views.get("a")!.phase, "playing");
+  assert.equal(views.get("a")!.disconnected, false);
+  assert.ok(views.get("a")!.players.every((player) => player.deadline === null));
 });
 test("explicit leave ends immediately; last seat leaving deletes room", () => {
   const { rooms, host, views } = setup();
@@ -106,10 +123,10 @@ test("both disconnected seats are retained for grace then deleted", () => {
   const { rooms, host, time } = setup();
   rooms.disconnect("a");
   rooms.disconnect("b");
-  time(59_999);
+  time(299_999);
   rooms.expire();
   assert.equal(rooms.rooms.has(host.room), true);
-  time(60_000);
+  time(300_000);
   rooms.expire();
   assert.equal(rooms.rooms.size, 0);
 });
@@ -117,7 +134,7 @@ test("empty waiting room deleted immediately or after disconnect grace", () => {
   let now = 0;
   const r = new Rooms(
     () => {},
-    60_000,
+    undefined,
     () => now,
   );
   const a = r.create("a", "Alice");
@@ -125,7 +142,7 @@ test("empty waiting room deleted immediately or after disconnect grace", () => {
   assert.equal(r.rooms.has(a.room), false);
   r.create("b", "Bob");
   r.disconnect("b");
-  now = 60_000;
+  now = 300_000;
   r.expire();
   assert.equal(r.rooms.size, 0);
 });
