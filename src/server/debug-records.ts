@@ -51,7 +51,7 @@ export class DebugRecords {
       initialDeck,
       initialDeckTop: "last",
       server: {
-        appVersion: process.env.npm_package_version ?? "0.8.1",
+        appVersion: process.env.npm_package_version ?? "0.8.2",
         commit: process.env.RENDER_GIT_COMMIT ?? null,
         rulesVersion: "no-mercy-house-stack-challenge-v2",
       },
