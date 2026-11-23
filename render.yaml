@@ -15,3 +15,7 @@ services:
         value: "24"
       - key: NODE_ENV
         value: production
+      - key: ANALYTICS_ENABLED
+        value: "true"
+      # Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in this service's Environment.
+      # Keep credentials outside the repository. Without them, stdout logs still work.

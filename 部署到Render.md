@@ -83,6 +83,63 @@ Render 原生自动部署要求连接 GitHub：在 Render 的 **Account Settings
 
 这些措施控制应用的资源消耗，不能保证遭受分布式攻击时仍可访问。Render [官方说明](https://render.com/docs/ddos-protection)表示所有应用自动获得 Cloudflare DDoS 防护，[FAQ](https://render.com/docs/faq)说明不收取 DDoS 攻击产生的带宽费用。当前服务仍为 Free；绑卡后普通出站流量和构建额度超额可能收费，应结合账号用量和告警查看，不能把 Free 理解为账单硬上限。尚未调整账号级预算或告警配置。
 
+## 查看与汇总用户统计日志
+
+部署本版本后，在服务的 **Logs** 中搜索 `uno-analytics`，即可看到连接、加入房间、实际对局及断线的 JSON 日志。`device_id` 是站内随机浏览器标识的摘要，`identity_scope=persistent` 时刷新、重连和切换 VPN 不会变；它不需要新增 Render 密钥或数据库。统计日志不写入昵称、重连凭证、手牌或完整引荐 URL。
+
+重点看这些字段：
+
+| 字段                             | 含义                                                    |
+| -------------------------------- | ------------------------------------------------------- |
+| `event=visitor_connected`        | 网页建立了实时连接，可能尚未参加游戏                    |
+| `event=player_active`            | 该浏览器实际进入对局，可按 `device_id` 去重估算玩家数   |
+| `source` / `medium` / `campaign` | 入口链接的 UTM 推广标签                                 |
+| `referrer`                       | 浏览器提供的引荐域名；直接访问或隐藏来源时可能为空      |
+| `browser` / `os` / `device_type` | 浏览器、操作系统及设备类别                              |
+| `language` / `timezone`          | 浏览器设置，仅作粗略分布参考                            |
+| `network_ip`                     | 按可信代理规则获取的网络出口地址，VPN 下通常是 VPN 出口 |
+
+Render 默认未验证代理链，因此 `network_ip` 为 `null`。只有确认平台请求头追加规则和可信跳数后，才配置 `TRUST_PROXY_HOPS`；不要为了统计随意信任 `X-Forwarded-For`。浏览器设备标识用于跨 IP 去重，不能获取 IMEI、MAC 或绕过 VPN 识别真实位置。没有可靠地理信息时保持未知，不把语言、时区当作国家或城市。
+
+将所需时间段的日志导出/保存到本地后，在项目目录安装依赖并汇总：
+
+```sh
+npm ci
+npm run --silent analytics:report -- /tmp/uno.log > /tmp/uno-report.json
+```
+
+也可传多个文件或从标准输入读取。报告包含全部输入范围的独立访客、实际玩家、房间参与者、连接数、局数，以及 UTC 每日和来源/浏览器/系统/语言/时区分布；同一浏览器重连不会增加去重人数。`persistent`、`ephemeral`、`connection` 分组帮助识别存储受限或旧客户端造成的统计偏差。精确口径和推广链接示例见 [README](README.md#访客设备与来源统计)。
+
+日志保留时长受 Render 当前方案与设置影响；应用本身不会永久保存原始日志，重启也不会补回丢失记录。长期趋势可使用下方 Turso 配置，仍可定期导出并妥善保管原始日志，不要将带设备标识和网络地址的原始日志公开发布。环境变量 `ANALYTICS_ENABLED=false` 可关闭统计记录，正常联机不受影响。
+
+## 配置 Turso 长期统计
+
+Render 日志用于查看近期事件，Turso 保存跨部署、重启的长期访客与玩家统计。游戏服务继续使用 Render Free；不要把生产统计写入 Render 本地 SQLite，免费实例的文件系统会在重启、部署或休眠后丢失，且不支持持久盘。[Render 官方说明](https://render.com/docs/free)
+
+Turso 当前 Free 方案提供 5GB 存储、每月 5 亿行读取和 1000 万行写入，无需信用卡；具体额度以创建时的 [官方定价](https://turso.tech/pricing) 为准。以下操作只使用 Free，不需要开启付费方案或超额计费。
+
+1. 注册或登录 [Turso 控制台](https://app.turso.tech/)，选择 **Free**，创建一个统计专用数据库，区域尽量接近 Render 服务。
+2. 在该数据库中复制 **Database URL**，并创建该数据库的访问 Token。服务端需要写入及首次建表权限；不使用管理整个组织的 API Token。保留控制台给出的 URL 格式（`libsql://` 或 `turso://` 等），不要自行替换数据库域名。
+3. 打开现有 Render 服务的 **Environment**，添加 `TURSO_DATABASE_URL` 和 `TURSO_AUTH_TOKEN`，确保 `ANALYTICS_ENABLED=true`。Token 只填入环境变量，不提交到仓库或发到聊天中。环境变量变更需部署/重启才能生效，会清空当前内存房间，应避开正在进行的游戏。
+4. 部署后在 **Logs** 搜索 `uno-analytics-storage`，确认数据库状态为 `ready`；用两个浏览器参加一次对局，等待约 5 秒，再用下方命令确认 `players` 已增加。若出现 `config_error`，检查两个变量是否齐全和 URL 格式；`retry` 表示写入暂时失败，检查 Token 权限、网络及 Turso 用量；`overflow` 表示待写队列已满，部分统计可能遗漏。错误日志不输出 Token 或完整连接信息。
+
+设置两个环境变量本身不代表数据库已成功连通，需要 `ready` 状态和真实查询结果验证。未配置数据库时仍只输出 Render 日志，联机正常；目前没有自动导入接入前的历史日志。
+
+本机查询长期统计：
+
+```sh
+npm ci
+# 先在本机环境中配置数据库 URL 和 Token；查询可单独使用只读 Token。
+npm run --silent analytics:db-report
+npm run --silent analytics:db-report -- --from 2026-11-01 --to 2026-11-30 > /tmp/uno-monthly.json
+```
+
+也可将本机凭据保存到未提交的 `.env`，通过 `node --env-file=.env --import tsx scripts/analytics-db-report.ts` 读取。查询工具只读已有表，不会自动建表；首次接入应先让服务端初始化成功。
+
+数据库按「UTC 日期＋匿名设备标识＋来源组合」聚合，不保存网络 IP、昵称、重连凭证、房间/局 ID 或手牌。报告跨日期、来源按设备标识去重，包含访客、实际玩家、房间参与者和各类别分布；数据库不保存连接次数和局数，相关统计需使用原始日志报告。语言、时区仍只是客户端设置，不代表真实所在地。
+
+程序不按天删除数据库历史，但数据持续保留仍取决于数据库存在、服务条款与用量额度，建议定期备份。异步队列每 5 秒尝试批量写入，失败会重试，游戏不等待数据库；队列只在内存中，停机期间断网、进程被强制终止或队列溢出可能丢失未写入记录。Render 原始日志在保留期内可用于核对，目前没有自动回填。
+
 ## 排错
 
 - 缺少 `vite` / `tsc`：确认构建命令包含 `npm ci --include=dev`。

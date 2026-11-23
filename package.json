@@ -10,9 +10,13 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "test:e2e": "playwright test",
+    "analytics:report": "tsx scripts/analytics-report.ts",
+    "analytics:db-report": "tsx scripts/analytics-db-report.ts",
     "format": "prettier --write src tests *.json *.ts README.md"
   },
   "dependencies": {
+    "@libsql/client": "^0.18.0",
+    "@tursodatabase/serverless": "^1.4.1",
     "express": "^5.1.0",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1"
