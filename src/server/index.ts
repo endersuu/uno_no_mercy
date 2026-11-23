@@ -8,6 +8,9 @@ import { Server } from "socket.io";
 import { resolve } from "node:path";
 import { Rooms } from "./rooms.js";
 import { AbuseGuard, clientIp } from "./abuse.js";
+import { Analytics } from "./analytics.js";
+import { AnalyticsStore } from "./analytics-store.js";
+import { createAnalyticsClient } from "./turso.js";
 import type { RoomAction, Reply } from "../shared/types.js";
 const trustedProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 0);
 if (
@@ -75,7 +78,34 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 app.use(httpBudget);
 // Engine.IO handles its own route before Express, including polling requests.
 io.engine.use(httpBudget);
-const rooms = new Rooms((id, v) => io.to(id).emit("state", v));
+let analyticsStore: AnalyticsStore | null = null;
+if (process.env.ANALYTICS_ENABLED !== "false") {
+  try {
+    const client = createAnalyticsClient();
+    if (client) {
+      analyticsStore = new AnalyticsStore(client);
+      void analyticsStore.flush();
+    } else {
+      console.log(
+        JSON.stringify({
+          kind: "uno-analytics-storage",
+          event: "not_configured",
+        }),
+      );
+    }
+  } catch {
+    console.error(
+      JSON.stringify({ kind: "uno-analytics-storage", event: "config_error" }),
+    );
+  }
+}
+const analytics = new Analytics(undefined, undefined, undefined, (record) =>
+  analyticsStore?.enqueue(record),
+);
+const rooms = new Rooms((id, v) => {
+  io.to(id).emit("state", v);
+  analytics.observeState(id, v);
+});
 setInterval(() => rooms.expire(), 500).unref();
 setInterval(() => guard.prune(), 30_000).unref();
 io.engine.on("connection_error", ({ req }: { req: IncomingMessage }) => {
@@ -110,6 +140,12 @@ io.engine.on("connection", (connection) => {
 });
 io.on("connection", (socket) => {
   const ip = identify(socket.request);
+  analytics.connect(
+    socket.id,
+    socket.handshake.auth?.analytics,
+    socket.request.headers["user-agent"],
+    ip,
+  );
   let idleTimer: NodeJS.Timeout;
   const startIdleTimer = () => {
     clearTimeout(idleTimer);
@@ -148,7 +184,9 @@ io.on("connection", (socket) => {
           if (!guard.take("create", ip))
             throw Error("创建房间太频繁，请稍后再试。");
           last = now;
-          ack({ ok: true, ...rooms.create(socket.id, d.name) });
+          const result = rooms.create(socket.id, d.name);
+          analytics.roomEntered(socket.id, result.room);
+          ack({ ok: true, ...result });
         } else {
           if (
             typeof d.room !== "string" ||
@@ -157,15 +195,14 @@ io.on("connection", (socket) => {
               (typeof d.token !== "string" || d.token.length > 64))
           )
             throw Error("无效房间链接。");
-          ack({
-            ok: true,
-            ...rooms.join(
-              d.room,
-              socket.id,
-              d.name,
-              d.token as string | undefined,
-            ),
-          });
+          const result = rooms.join(
+            d.room,
+            socket.id,
+            d.name,
+            d.token as string | undefined,
+          );
+          analytics.roomEntered(socket.id, result.room);
+          ack({ ok: true, ...result });
         }
         clearTimeout(idleTimer);
         return;
@@ -214,17 +251,28 @@ io.on("connection", (socket) => {
         ].includes(a.type)
       )
         throw Error("无效操作。");
+      // Remember the live round before a successful move can finish it. This
+      // also counts a final move just after UTC midnight in that day's audience.
+      const { r, p } = rooms.find(socket.id);
+      const before = rooms.view(r, p);
+      const participants = r.seats.flatMap((s) =>
+        s?.socket ? [s.socket] : [],
+      );
       rooms.update(socket.id, d.revision as number, a as RoomAction);
+      if (!["pause", "resume", "rematch"].includes(a.type))
+        for (const id of participants) analytics.observeState(id, before);
       ack({ ok: true });
     } catch (e) {
       ack({ ok: false, error: e instanceof Error ? e.message : "请求失败。" });
     }
   });
-  socket.on("disconnect", () => {
+  socket.on("disconnect", (reason) => {
     clearTimeout(idleTimer);
+    analytics.disconnect(socket.id, reason);
     rooms.disconnect(socket.id);
   });
 });
+let closeDevServer: (() => Promise<void>) | undefined;
 if (process.env.NODE_ENV === "production") {
   app.use(express.static(resolve("dist/client")));
   app.get("/{*path}", (_req, res) =>
@@ -236,15 +284,33 @@ if (process.env.NODE_ENV === "production") {
     server: { middlewareMode: true },
     appType: "spa",
   });
+  closeDevServer = () => vite.close();
   app.use(vite.middlewares);
 }
 const port = Number(process.env.PORT ?? 3000);
 http.listen(port, "0.0.0.0", () =>
   console.log(`UNO server listening on port ${port}`),
 );
-function shutdown() {
-  io.close();
-  http.close();
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  // Native Turso's final session-close request has no SDK timeout. Bound the
+  // whole shutdown as well as ordinary queries, within Render's stop window.
+  setTimeout(() => {
+    console.error(
+      JSON.stringify({
+        kind: "uno-analytics-storage",
+        event: "shutdown_timeout",
+        pending_rows: analyticsStore?.pendingCount ?? 0,
+      }),
+    );
+    process.exit(1);
+  }, 25_000).unref();
+  // Closing Socket.IO emits disconnect events before the final database drain.
+  await new Promise<void>((done) => io.close(() => done()));
+  await analyticsStore?.close();
+  await closeDevServer?.();
 }
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

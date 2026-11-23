@@ -1,6 +1,6 @@
 # UNO · No Mercy 双人朋友局
 
-TypeScript 实时双人 MVP。创建房间后复制链接，第二位玩家加入即开始。无需账号、数据库或外部服务，不包含积分或排名。
+TypeScript 实时双人 MVP。创建房间后复制链接，第二位玩家加入即开始。游戏无需账号或数据库，不包含积分或排名；可选连接 Turso 保存长期运营统计。
 
 在线游戏：**https://uno-no-mercy-8skm.onrender.com**。创建房间后将邀请链接发给朋友即可，电脑和手机都可直接进入。
 
@@ -92,6 +92,43 @@ JSON 包含双方昵称、初始洗牌结果、双方完整手牌、牌堆和弃
 
 服务端使用私有临时目录中的逐行记录文件，避免把整局历史反复发给客户端或一直积存在内存。房间销毁后清理记录；本功能不是跨重启的永久历史存储。
 
+## 访客、设备与来源统计
+
+服务端默认向标准输出写入逐行 JSON 日志，搜索 `"kind":"uno-analytics"` 即可查看。四类事件分别是连接页面 `visitor_connected`、成功创建/加入房间 `room_entered`、进入实际对局 `player_active`、断开连接 `visitor_disconnected`。单次连接的同一局每天只记一次活跃；跨 UTC 日期后，下一次未暂停且双方在线的对局状态更新会补记当天活跃。它表示参与了对局，不保证玩家主动出过牌；没有状态更新时也不会产生每日心跳。
+
+`device_id` 是浏览器随机 UUID 的 SHA-256 摘要。原 UUID 保存在当前站点的 localStorage，不使用 IP 去重，因此切换网络或 VPN 后，同一浏览器仍可识别。它不是 IMEI、MAC 或硬件指纹，也不代表一个自然人：换浏览器、无痕窗口或清理网站数据会产生新标识，多人共用浏览器则可能合并。`identity_scope` 为 `persistent` 表示持久浏览器标识，`ephemeral` 表示存储不可用时的页面临时标识，`connection` 表示旧客户端/无有效标识的连接级回退；后两种可能高估人数。所有客户端标识及设备信息均可伪造，只用于运营估算，不能用于认证或反作弊。
+
+日志还包含浏览器与系统类别、设备类型、语言、时区、引荐域名，以及入口 URL 的 `utm_source` / `utm_medium` / `utm_campaign`。推广链接可写为 `https://你的游戏域名/?utm_source=wechat&utm_medium=share&utm_campaign=friends`；UTM 标签只接受最长 80 字符的英文字母、数字、空格及 `_.~-`。引荐只保存域名，不记录完整来源 URL、查询参数、昵称、重连凭证或手牌。`network_ip` 使用现有可信代理规则获取；它可能是 VPN 出口，不能揭示真实位置，语言、时区也不能当作所在地。Render 未核实代理链时该字段为 `null`。
+
+将服务器日志导出为本地文件后，在已执行 `npm ci` 的项目目录运行：
+
+```sh
+npm run analytics:report -- /tmp/uno.log
+npm run --silent analytics:report -- /tmp/uno-1.log /tmp/uno-2.log > /tmp/uno-report.json
+cat /tmp/uno.log | npm run --silent analytics:report
+```
+
+报告为聚合 JSON：`totals.visitors` 是日志中出现过的独立浏览器标识数，`players` 是有实际对局记录的独立标识数，`room_entrants` 是成功进入房间的独立标识数；`connections` 区分重连次数，`rounds` 对双方记录和重连去重。`daily` 按 UTC 日期统计当日有记录的访客和实际玩家；`by_source` 优先使用 UTM 来源，其次引荐域名，否则记为 `direct/unknown`；还有浏览器、系统、设备类型、语言（`by_language`）、时区（`by_timezone`）和标识持久性分组；语言和时区分组只反映客户端设置，不代表真实地理位置。同一设备可出现在多个来源或日期中，各组不能简单相加。重复导出的日志不会增加去重人数；报告只反映输入文件覆盖的记录，不推算缺失记录。`input.malformed_records` 显示不兼容或损坏的统计记录数，普通启动日志会跳过，也兼容日志行前的平台时间戳。
+
+日志始终写入标准输出供 Render 收集，不增加公开统计接口。设置服务端环境变量 `ANALYTICS_ENABLED=false` 可关闭统计记录。Render 查看日志和代理配置见 [部署说明](部署到Render.md#查看与汇总用户统计日志)。
+
+### 长期统计：Turso
+
+配置 `TURSO_DATABASE_URL` 和 `TURSO_AUTH_TOKEN` 后，服务端会同时将统计异步写入 Turso。两个变量均未配置时仅输出日志；配置错误或数据库暂时不可用不会阻止联机。使用 Turso 控制台提供的数据库 URL，支持 `libsql://`、`https://` 和 `turso://`；Token 使用该数据库的访问令牌，放在 Render Environment 或本机环境变量中，不写入代码、聊天或公开日志。生产环境不允许回退到本地 SQLite，以免 Render 临时磁盘在重启后丢失数据。免费数据库创建步骤见 [部署说明](部署到Render.md#配置-turso-长期统计)。
+
+数据库按「UTC 日期＋匿名设备标识＋来源组合」合并记录，保存首次/最后出现时间、是否进入房间、是否实际参局，以及设备和来源类别。重复上报、重连或服务器重启不会增加同一天同一来源的重复行；同一设备跨日期或来源仍用 `COUNT(DISTINCT device_id)` 统计。数据库不保存 IP、连接 ID、房间 ID、局 ID、昵称、凭证或出牌内容，因此长期数据库报告不提供连接次数和局数；这两个指标仍可从保存的原始日志计算。
+
+在本机设置数据库环境变量后，可查询全部历史或指定 UTC 日期范围（首尾日期都包含）：
+
+```sh
+npm run --silent analytics:db-report
+npm run --silent analytics:db-report -- --from 2026-11-01 --to 2026-11-30 > /tmp/uno-monthly.json
+```
+
+若凭据保存在项目根目录未提交的 `.env` 中，可用 `node --env-file=.env --import tsx scripts/analytics-db-report.ts`。查询工具只读取已有表，不创建或修改数据库，可以使用单独的只读 Token；服务端需要有写入及建表权限的数据库 Token。报告包含去重访客、实际玩家、房间参与者，以及每日、来源、浏览器、系统、设备类型、语言、时区和标识持久性分组。各组不能直接相加；浏览器类别在同一天同一来源下发生变化时，使用最后一次记录的类别。
+
+应用没有按天自动删除数据库记录，在所选服务额度内持续保存；仍建议定期导出报告或数据库备份，并关注 Turso 用量。默认每 5 秒批量落库，内存队列有上限并对失败写入退避重试，正常停机尽力排空；断网期间被强制终止或队列溢出可能丢失尚未落库的数据。JSON 日志仍保留在 Render 的日志保留期内，但目前没有自动从日志回填数据库，不能保证数据库记录绝不遗漏。
+
 ## 验证
 
 ```sh
@@ -110,6 +147,9 @@ npm run test:e2e    # 构建后运行；真实 Chromium 双会话及手机布局
 - `src/server/rooms.ts`：房间、席位、暂停、重连、再战和私有视图。
 - `src/server/debug-records.ts`：按局保存完整调试记录并生成 JSON 导出。
 - `src/server/index.ts`：HTTP / Socket.IO 接口、输入验证、消息限流。
+- `src/server/analytics.ts`：匿名设备和来源统计事件。
+- `src/server/analytics-store.ts` / `turso.ts`：异步聚合写入及数据库连接。
+- `scripts/analytics-report.ts` / `analytics-db-report.ts`：原始日志和长期数据库的只读汇总工具。
 - `src/shared/types.ts`：前后端共享协议。
 - `src/client/`：TypeScript 界面、规则、响应式样式；`motion.ts` 负责公开事件的动效及文字反馈。
 
